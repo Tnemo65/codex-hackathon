@@ -5,7 +5,7 @@ import { ActivityIndicator, Animated, Easing, Image, Pressable, StyleSheet, Text
 import { post } from '../api';
 import { pickPhoto, takePhoto, type Photo } from '../photo';
 import { C, R, T } from '../theme';
-import type { Item, Profile } from '../types';
+import { PROPORTION_LABEL, type Item, type Profile } from '../types';
 import { Badge, Button, Card, ErrorBox, Icon, Screen } from '../ui';
 
 // Set to true once the flow works end to end; App hides the entry point while false.
@@ -23,8 +23,9 @@ type StatusRes = { status: 'pending' | 'done' | 'failed'; image_url: string | nu
 let consentGiven = false;
 let bodyOnServer = false;
 
-export default function TryOn({ items, initialItemIds, onBack, onUseToday }: { items: Item[]; profile: Profile; initialItemIds: string[]; onBack: () => void; onUseToday: (itemIds: string[]) => void }) {
-  const [step, setStep] = useState<Step>(bodyOnServer ? 'pick' : 'setup');
+export default function TryOn({ items, profile, initialItemIds, onBack, onUseToday }: { items: Item[]; profile: Profile; initialItemIds: string[]; onBack: () => void; onUseToday: (itemIds: string[]) => void }) {
+  // Starts at the garment picker: without a body photo the AI draws a model from the profile numbers.
+  const [step, setStep] = useState<Step>('pick');
   const [consent, setConsent] = useState(consentGiven);
   const [draft, setDraft] = useState<Photo | null>(null); // photo being checked
   const [body, setBody] = useState<Photo | null>(null); // accepted photo, not yet uploaded
@@ -82,6 +83,7 @@ export default function TryOn({ items, initialItemIds, onBack, onUseToday }: { i
       const { job_id } = await post<{ job_id: string }>(TRYON_URL, 'tryon.create', {
         item_ids: selected,
         body_image_base64: body ? body.base64 : null,
+        body_mode: body || bodyOnServer ? 'photo' : 'profile',
         item_images_base64: extras.map((p) => p.base64),
       }, 90000);
       if (body) {
@@ -124,7 +126,7 @@ export default function TryOn({ items, initialItemIds, onBack, onUseToday }: { i
   // ---------- 1. Thiết lập dáng người ----------
   if (step === 'setup') {
     return (
-      <Screen title="Thiết lập dáng người" subtitle="Dùng để minh hoạ độ dài và phom đồ khi mặc." onBack={onBack}
+      <Screen title="Thiết lập dáng người" subtitle="Dùng để minh hoạ độ dài và phom đồ khi mặc." onBack={() => setStep('pick')}
         footer={consent ? (
           <>
             <Button title="Tải ảnh toàn thân" icon="image" onPress={() => getPhoto('library')} />
@@ -240,9 +242,15 @@ export default function TryOn({ items, initialItemIds, onBack, onUseToday }: { i
         <>
           <Text style={T.sub}>{count} món đã chọn</Text>
           <Button title="Tạo ảnh phối" icon="spark" disabled={count < 2} loading={busy} onPress={generate} />
-          {!body ? <Button title={bodyOnServer ? 'Cập nhật dáng người' : 'Tải ảnh toàn thân'} kind="outline" onPress={() => setStep('setup')} /> : null}
+          {!body ? <Button title={bodyOnServer ? 'Cập nhật dáng người' : 'Dùng ảnh toàn thân của tôi'} kind="outline" onPress={() => setStep('setup')} /> : null}
         </>
       )}>
+      {!body && !bodyOnServer ? (
+        <View style={st.bodyRow}>
+          <Icon name="person" size={28} color={C.wine} />
+          <Text style={[T.sub, { flex: 1 }]}>AI dựng dáng theo hồ sơ: {profile.height_cm} cm · {profile.weight_kg} kg · {PROPORTION_LABEL[profile.proportion].toLowerCase()}. Không cần ảnh của bạn.</Text>
+        </View>
+      ) : null}
       {body ? (
         <Pressable onPress={() => setStep('setup')} accessibilityRole="button" accessibilityLabel="Đổi ảnh toàn thân" style={st.bodyRow}>
           <Image source={{ uri: body.uri }} style={st.bodyThumb} resizeMode="cover" />

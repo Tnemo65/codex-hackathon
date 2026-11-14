@@ -15,8 +15,8 @@ const MAX_GARMENTS = 5;
 // Free plan wall clock is 150 s (paid 400 s); keep the OpenAI call under it so the job can record a failure.
 const OPENAI_TIMEOUT_MS = 135_000;
 const STALE_MS = 170_000;
-const MAX_JOBS_PER_DEVICE = 20; // per 24 hours; room for rehearsals and the live demo on one phone
-const MAX_JOBS_GLOBAL = 60; // per 24 hours
+const MAX_JOBS_PER_DEVICE = 60; // per 24 hours; Today now draws a model photo per outfit, plus rehearsals and the live demo
+const MAX_JOBS_GLOBAL = 300; // per 24 hours
 const MAX_BODY_CHARS = (MAX_GARMENTS + 1) * MAX_IMAGE_B64 + 20_000;
 const DEVICE_RE = /^[a-z0-9_]{8,64}$/; // same rule as the `api` function
 
@@ -102,6 +102,28 @@ const PROMPT = [
   "Full body visible from head to feet, centred, portrait framing. No text, no logos, no watermark.",
 ].join(" ");
 
+// No body photo: draw a model from the numbers in the profile, so try-on works without any personal photo.
+const BODY_SHAPE: Record<string, string> = {
+  long_torso: "a noticeably longer torso and shorter legs",
+  balanced: "balanced torso and leg proportions",
+  long_legs: "longer legs and a shorter torso",
+};
+function profilePrompt(p: Record<string, unknown> | null): string {
+  const who = p?.wear === "m" ? "Vietnamese man" : p?.wear === "f" ? "Vietnamese woman" : "Vietnamese person";
+  const h = Number(p?.height_cm), w = Number(p?.weight_kg);
+  const size = h > 0 && w > 0 ? `about ${h} cm tall and ${w} kg` : "of average height and build";
+  const shape = BODY_SHAPE[String(p?.proportion)] ?? BODY_SHAPE.balanced;
+  return [
+    "Virtual try-on. All the images are individual garments and accessories.",
+    `Create one photorealistic full-body photo of a ${who} in their twenties, ${size}, with ${shape}, standing straight, facing the camera, arms relaxed, natural friendly expression.`,
+    "Show that body honestly: do not slim it or lengthen the legs, so waistlines and hems fall where they really would on this body.",
+    "Dress them in exactly the provided garments, keeping each garment's colour, pattern, fabric, length and cut.",
+    "Correct layering: outerwear over the top, top tucked or untucked naturally, shoes on the feet, bag carried on the shoulder or in the hand.",
+    "If no shoes are provided, use simple neutral shoes. Plain light neutral studio background, soft even lighting.",
+    "Full body visible from head to feet, centred, portrait framing. No text, no logos, no watermark.",
+  ].join(" ");
+}
+
 // Short Vietnamese message for the app, distinguishing the cases the user can act on.
 function describeError(err: unknown): { message: string; modelUnavailable: boolean } {
   const e = err as { status?: number; code?: string; type?: string; message?: string; name?: string };
@@ -119,13 +141,13 @@ function describeError(err: unknown): { message: string; modelUnavailable: boole
   return { message: "AI tạm thời không tạo được ảnh, thử lại sau nhé.", modelUnavailable: false };
 }
 
-async function generate(model: string, images: File[]): Promise<string> {
+async function generate(model: string, images: File[], prompt: string): Promise<string> {
   const openai = new OpenAI({ apiKey: Deno.env.get("OPENAI_API_KEY"), timeout: OPENAI_TIMEOUT_MS, maxRetries: 0 });
   // deno-lint-ignore no-explicit-any
   const params: any = {
     model,
     image: images,
-    prompt: PROMPT,
+    prompt,
     size: "1024x1536",
     quality: QUALITY,
     output_format: "jpeg",
@@ -137,19 +159,19 @@ async function generate(model: string, images: File[]): Promise<string> {
   return b64;
 }
 
-async function runJob(jobId: string, images: File[]) {
+async function runJob(jobId: string, images: File[], prompt: string) {
   const started = Date.now();
   let model = MODEL;
   try {
     let b64: string;
     try {
-      b64 = await generate(model, images);
+      b64 = await generate(model, images, prompt);
     } catch (err) {
       const d = describeError(err);
       if (!d.modelUnavailable || model === FALLBACK_MODEL) throw err;
       console.error("primary model unavailable, trying fallback", { model, error: String((err as Error)?.message ?? err) });
       model = FALLBACK_MODEL;
-      b64 = await generate(model, images);
+      b64 = await generate(model, images, prompt);
     }
     const path = `tryon/${jobId}.jpg`;
     const { error } = await storage().from(BUCKET).upload(path, b64ToBytes(b64), { contentType: "image/jpeg", upsert: true });
@@ -219,10 +241,14 @@ async function create(device: string, body: Record<string, unknown>) {
   if (itemIds.length + extras.length > MAX_GARMENTS) throw new HttpError(400, "Chọn tối đa 5 món để phối.");
   const extraB64 = extras.map(cleanB64);
 
-  // Body photo: store the new one, or reuse the stored one.
+  // Body: a new photo (stored), the stored photo, or (body_mode "profile") a model drawn from the profile numbers.
   const bodyPath = `body/${device}.jpg`;
-  let bodyFile: File;
-  if (body.body_image_base64) {
+  let bodyFile: File | null = null;
+  let prompt = PROMPT;
+  if (!body.body_image_base64 && body.body_mode === "profile") {
+    const [prof] = await sql`select data from profiles where device_id = ${device}`;
+    prompt = profilePrompt(prof?.data ?? null);
+  } else if (body.body_image_base64) {
     const bytes = b64ToBytes(cleanB64(body.body_image_base64));
     const { error } = await storage().from(BUCKET).upload(bodyPath, bytes, { contentType: "image/jpeg", upsert: true });
     if (error) console.error("body upload", error.message);
@@ -239,9 +265,9 @@ async function create(device: string, body: Record<string, unknown>) {
 
   const [job] = await sql`insert into tryon_jobs (device_id, item_ids) values (${device}, ${itemIds}) returning id`;
   const jobId = String(job.id);
-  console.log("tryon start", { job: jobId, model: MODEL, garments: garments.length });
+  console.log("tryon start", { job: jobId, model: MODEL, garments: garments.length, body: bodyFile ? "photo" : "profile" });
   // Respond now; the generation keeps running until the promise settles (or the wall clock limit).
-  const task = runJob(jobId, [bodyFile, ...garments]);
+  const task = runJob(jobId, bodyFile ? [bodyFile, ...garments] : garments, prompt);
   (globalThis as unknown as { EdgeRuntime?: { waitUntil(p: Promise<unknown>): void } }).EdgeRuntime?.waitUntil(task);
   return { job_id: jobId };
 }

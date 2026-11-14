@@ -4,7 +4,7 @@ import { Animated, PanResponder, Pressable, ScrollView, StyleSheet, Text, View, 
 import { api, dateLabel, todayStr } from '../api';
 import { ChatSheet } from '../components/ChatSheet';
 import { OutfitCanvas } from '../components/OutfitCanvas';
-import { OutfitOnBody } from '../components/OutfitOnBody';
+import { OutfitPhoto } from '../components/OutfitPhoto';
 import { ThoughtLine, secs } from '../components/ThoughtLine';
 import { C, R, S, T } from '../theme';
 import { COMMUTE_LABEL, OCCASIONS, type Commute, type Item, type Outfit, type Plan, type Profile, type Weather } from '../types';
@@ -56,7 +56,7 @@ export default function Today({ profile, items, onOpenTryOn, onGoWardrobe, onIte
   const [idx, setIdx] = useState(0);
   const [weather, setWeather] = useState<Weather | null>(null);
   const [empty, setEmpty] = useState(false);
-  const [mode, setMode] = useState<'canvas' | 'body'>('canvas');
+  const [mode, setMode] = useState<'canvas' | 'body'>('body'); // Figma opens on the model photo
   const [occasion, setOccasion] = useState(profile.occasions[0] ?? 'Đi làm');
   const [commute, setCommute] = useState<Commute>(profile.commute);
   const [busy, setBusy] = useState<string | null>(null);
@@ -296,7 +296,7 @@ export default function Today({ profile, items, onOpenTryOn, onGoWardrobe, onIte
               ) : mode === 'canvas' ? (
                 <OutfitCanvas items={outfitItems} width={boxW} height={360} />
               ) : (
-                <OutfitOnBody items={outfitItems} profile={profile} width={boxW} height={360} />
+                <OutfitPhoto items={outfitItems} profile={profile} width={boxW} height={440} />
               )}
               {canSwipe ? (
                 <>

@@ -1,7 +1,7 @@
 // "Lịch" screen: month / week view of planned and worn outfits, with a detail card for the selected day.
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
-import { api, dateLabel, todayStr } from '../api';
+import { api, dateLabel, todayStr, type DayWeather } from '../api';
 import { C, R, S, T } from '../theme';
 import type { Item, Plan, PlanStatus, Profile } from '../types';
 import { Badge, Button, Card, ErrorBox, Icon, Loading, Screen } from '../ui';
@@ -13,6 +13,7 @@ const addDays = (d: Date, n: number) => new Date(d.getFullYear(), d.getMonth(), 
 const mondayOf = (d: Date) => addDays(d, -((d.getDay() + 6) % 7));
 const WEEK = ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'];
 const STATUS: Record<PlanStatus, string> = { worn: 'Đã mặc', planned: 'Đã chốt', suggested: 'Gợi ý' };
+const RAIN = '#2B5F9E'; // days that may rain (blue + underline in the grid)
 
 // Visible date range: the 6-week-max grid for a month, or Monday..Sunday for a week.
 function rangeOf(mode: 'month' | 'week', anchor: Date): { start: Date; days: number } {
@@ -58,6 +59,13 @@ export default function Calendar({ items, onOpenTryOn, onOpenProfile, profile }:
   }, [from, to]);
   useEffect(load, [load]);
 
+  const [fc, setFc] = useState<Record<string, DayWeather>>({});
+  useEffect(() => {
+    let live = true;
+    api.weatherRange(from, to, profile.city).then((w) => { if (live) setFc(w); });
+    return () => { live = false; };
+  }, [from, to, profile.city]);
+
   const byId = new Map(items.map((i) => [i.id, i]));
   const itemsOf = (p?: Plan) => (p?.outfit ? p.outfit.item_ids.map((id) => byId.get(id)).filter((i): i is Item => !!i) : []);
 
@@ -74,6 +82,13 @@ export default function Calendar({ items, onOpenTryOn, onOpenProfile, profile }:
 
   const sel = plans[selected];
   const selItems = itemsOf(sel);
+  // Weather row: the weather saved with the plan wins, else the forecast.
+  const rec = sel?.weather;
+  const f = fc[selected];
+  const wx = rec
+    ? { place: rec.place, lo: rec.t_min, hi: rec.t_max, cond: rec.morning.cond, rain: Math.max(rec.morning.rain_pct, rec.afternoon.rain_pct, rec.evening.rain_pct) }
+    : f ? { place: profile.city, lo: f.t_min, hi: f.t_max, cond: f.cond, rain: f.rain_pct } : null;
+  const wxLine = wx ? `${wx.place} · ${wx.lo}–${wx.hi}° · ${wx.cond} · mưa ${wx.rain}%` : '';
 
   return (
     <Screen title="Lịch outfit" subtitle={subtitle} right={
@@ -116,12 +131,19 @@ export default function Calendar({ items, onOpenTryOn, onOpenProfile, profile }:
                   <Pressable key={c} onPress={() => setSelected(key)} accessibilityRole="button" accessibilityLabel={`${dateLabel(key)}${p ? `, ${STATUS[p.status]}` : ''}`}
                     style={[st.cell, st.day, isSel && { backgroundColor: C.pink }, isToday && { backgroundColor: C.wine }]}>
                     <Text style={{ fontSize: 15, fontWeight: isToday || isSel ? '700' : '500', color: isToday ? '#fff' : C.text }}>{d.getDate()}</Text>
-                    <View style={[st.dot, { backgroundColor: p ? (p.status === 'worn' ? (isToday ? '#fff' : C.wine) : p.status === 'planned' ? C.accent : C.pink) : 'transparent' }]} />
+                    {fc[key] ? (
+                      <Text numberOfLines={1} style={[{ fontSize: 11, color: isToday ? '#fff' : C.sub },
+                        fc[key].rain_pct >= 35 && { fontWeight: '700', color: isToday ? '#fff' : RAIN, textDecorationLine: 'underline' }]}>
+                        {fc[key].t_max}°
+                      </Text>
+                    ) : null}
+                    <View style={[st.dot,{ backgroundColor: p ? (p.status === 'worn' ? (isToday ? '#fff' : C.wine) : p.status === 'planned' ? C.accent : C.pink) : 'transparent' }]} />
                   </Pressable>
                 );
               })}
             </View>
           ))}
+          <Text style={{ fontSize: 11, color: C.sub, marginTop: 6 }}>Số dưới ngày: nhiệt độ cao nhất ở {profile.city}. <Text style={{ color: RAIN, fontWeight: '700', textDecorationLine: 'underline' }}>Gạch chân</Text>: có thể mưa.</Text>
         </Card>
       ) : (
         <View style={st.navRow}>
@@ -138,6 +160,12 @@ export default function Calendar({ items, onOpenTryOn, onOpenProfile, profile }:
         <Card style={{ gap: 12 }}>
           <Text style={T.h2}>Chi tiết ngày</Text>
           <Text style={T.sub}>{dateLabel(selected)}</Text>
+          {wx ? (
+            <View style={{ gap: 2 }}>
+              <Text style={[T.body, { fontWeight: '600' }]}>{wxLine}</Text>
+              {rec && sel?.status === 'worn' ? <Text style={T.small}>Thời tiết lúc mặc</Text> : null}
+            </View>
+          ) : <Text style={T.small}>Chưa có dự báo cho ngày này</Text>}
           {sel?.outfit ? (
             <View style={{ gap: 10 }}>
               <View style={{ flexDirection: 'row', gap: 12, alignItems: 'center' }}>

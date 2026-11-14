@@ -5,7 +5,7 @@ import { Dimensions, Image, Linking, Pressable, ScrollView, StyleSheet, Text, Vi
 import { api, todayStr } from '../api';
 import { cachedCatalog, loadCatalog, takeStudioPicks } from '../catalog';
 import { OutfitCanvas } from '../components/OutfitCanvas';
-import { OutfitOnBody } from '../components/OutfitOnBody';
+import { OutfitPhoto } from '../components/OutfitPhoto';
 import { C, R, S, T } from '../theme';
 import type { Item, Kind, Product, Profile } from '../types';
 import { Badge, Button, Card, ErrorBox, Icon, Screen } from '../ui';
@@ -183,7 +183,7 @@ export default function Studio({ items, profile, onOpenTryOn, onPlanChanged, onO
             ) : mode === 'canvas' ? (
               <OutfitCanvas items={picked} width={boxW} height={360} onPressItem={toggle} />
             ) : (
-              <OutfitOnBody items={picked} profile={profile} width={boxW} height={360} />
+              <OutfitPhoto items={picked} profile={profile} width={boxW} height={440} auto={false} />
             )}
           </View>
 
@@ -249,7 +249,7 @@ export default function Studio({ items, profile, onOpenTryOn, onPlanChanged, onO
                     <Text style={{ fontSize: 14, fontWeight: '700', color: C.text }} numberOfLines={1}>{p.name}</Text>
                     <Text style={T.small}>{money(p.price)} · {p.shop}</Text>
                   </View>
-                  <Button title={`Mua trên ${p.shop}`} kind="outline" onPress={() => void Linking.openURL(p.shop_url).catch(() => setErr('Không mở được liên kết.'))} />
+                  <Button title={`Tìm tương tự trên ${p.shop}`} kind="outline" onPress={() => void Linking.openURL(p.shop_url).catch(() => setErr('Không mở được liên kết.'))} />
                 </View>
               ))}
               <Text style={{ fontSize: 14, fontWeight: '700', color: C.text }}>Tổng: {money(total)}</Text>

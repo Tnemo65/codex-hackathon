@@ -173,7 +173,7 @@ export function ShopCatalog({ items, onOpenStudio }: { items: Item[]; onOpenStud
                 ) : null}
               </>
             )}
-            <Button title={`Mua trên ${open.shop}`} onPress={() => { Linking.openURL(open.shop_url).catch(() => {}); }} />
+            <Button title={`Tìm món tương tự trên ${open.shop}`} onPress={() => { Linking.openURL(open.shop_url).catch(() => {}); }} />
             <Button title="Phối thử với tủ đồ" kind="secondary" onPress={() => { queueStudioPick(open.id); setOpen(null); onOpenStudio(); }} />
           </>
         ) : null}

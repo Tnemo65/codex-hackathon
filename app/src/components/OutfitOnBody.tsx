@@ -1,6 +1,6 @@
 // "Trên người": the outfit drawn on a neutral figure built from the user's proportions (see src/body.ts).
 // Pure presentational: no network, no storage. All coordinates derive from width/height.
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Image, Text, View } from 'react-native';
 import Svg, { Ellipse, Line, Path, Text as SvgText } from 'react-native-svg';
 import { bodyMetrics, figureFrame, layeredItems, PANEL, slotBox, type BodyMetrics, type Frame } from '../body';
@@ -59,10 +59,29 @@ function armPath(m: BodyMetrics, f: Frame, s: 1 | -1): string {
   return `M${X(sh - 0.015)},${Y(m.shoulders + 0.025)} Q${X(sh + 0.03)},${Y(0.36)} ${X(m.hipHW + 0.04)},${Y(0.53)}`;
 }
 
+// Width / height of a remote image (1 until it is known).
+function useAspect(uri: string): number {
+  const [aspect, setAspect] = useState(1);
+  useEffect(() => {
+    let live = true;
+    Image.getSize(uri, (w, h) => { if (live && w > 0 && h > 0) setAspect(w / h); }, () => {});
+    return () => { live = false; };
+  }, [uri]);
+  return aspect;
+}
+
 function ItemImage({ item, box }: { item: Item; box: { x: number; y: number; w: number; h: number } }) {
   const uri = item.cutout_url ?? item.image_url;
+  const aspect = useAspect(uri);
   const pos = { position: 'absolute' as const, left: box.x, top: box.y, width: box.w, height: box.h };
-  if (item.cutout_url) return <Image source={{ uri }} style={pos} resizeMode="contain" />;
+  if (item.cutout_url) {
+    // Cut-outs fill their own canvas: trousers and dresses span the slot from waistband to hem,
+    // other pieces get a square as big as the slot's longer side so they are not shrunk into a narrow box.
+    const tall = item.kind === 'bottom' || item.kind === 'dress';
+    const h = tall ? box.h : Math.max(box.w, box.h);
+    const w = tall ? box.h * aspect : h;
+    return <Image source={{ uri }} style={{ position: 'absolute', left: box.x + box.w / 2 - w / 2, top: box.y, width: w, height: h }} resizeMode="contain" />;
+  }
   // Plain photo: a white-bordered card pinned on the figure; `contain` keeps the hem visible.
   return (
     <View style={[pos, { borderRadius: 10, borderWidth: 2, borderColor: '#FFFFFF', backgroundColor: C.card, overflow: 'hidden' }]}>
@@ -108,7 +127,7 @@ export function OutfitOnBody({ items, profile, width, height }: { items: Item[];
           <View style={it.cutout_url ? null : { borderRadius: 8, overflow: 'hidden', backgroundColor: C.card }}>
             <Image source={{ uri: it.cutout_url ?? it.image_url }} style={{ width: colW - 8, height: Math.max(8, cellH - labelH - 6) }} resizeMode="contain" />
           </View>
-          <Text numberOfLines={1} style={{ fontSize: 11, color: C.text, marginTop: 2, maxWidth: colW, textAlign: 'center' }}>{it.name}</Text>
+          <Text numberOfLines={1} style={{ fontSize: 11, fontWeight: '700', color: C.text, marginTop: 2, maxWidth: colW, textAlign: 'center' }}>{it.name}</Text>
         </View>
       ))}
 

@@ -89,7 +89,7 @@ export function slotBox(item: Item, m: BodyMetrics, f: Frame): Box {
     case 'outer': y0 = m.shoulders - 0.035; y1 = topHem(m, item.length) + 0.03; w = topW * 1.15; break;
     case 'bottom': y0 = waistband(m, item.rise); y1 = lowerHem(m, item.length, m.ankles); w = 2 * m.hipHW * 1.35 * wide; break;
     case 'dress': y0 = m.shoulders - 0.02; y1 = lowerHem(m, item.length, m.knees); w = Math.max(topW, 2 * m.hipHW * 1.45) * wide; break;
-    case 'shoes': y0 = m.ankles - 0.025; y1 = m.feet + 0.01; w = 2 * m.hipHW * 1.15; break;
+    case 'shoes': y0 = m.ankles - 0.075; y1 = m.feet + 0.025; w = 2 * m.hipHW * 1.15; break;
     default: { // bag: beside the hip on the viewer's left (as in Figma), away from the thumbnail column
       const s = 0.13;
       y0 = m.hips - s * 0.6; y1 = y0 + s; w = s; xc = -(m.hipHW + 0.02 + s / 2);

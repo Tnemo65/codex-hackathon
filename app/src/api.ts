@@ -123,7 +123,49 @@ export async function fetchWeather(date: string, city = 'Hà Nội'): Promise<We
   }
 }
 
+export type DayWeather = { t_min: number; t_max: number; rain_pct: number; cond: string };
+const rangeCache = new Map<string, { at: number; data: Record<string, DayWeather> }>();
+
+// Daily forecast for a date range, keyed by YYYY-MM-DD. Open-Meteo serves ~92 days back .. 16 days ahead.
+// Never throws: on any failure returns {} so the calendar still works.
+export async function fetchWeatherRange(from: string, to: string, city = 'Hà Nội'): Promise<Record<string, DayWeather>> {
+  const place = PLACES[city] ? city : 'Hà Nội';
+  const shift = (n: number) => { const d = new Date(); d.setDate(d.getDate() + n); return `${d.getFullYear()}-${`${d.getMonth() + 1}`.padStart(2, '0')}-${`${d.getDate()}`.padStart(2, '0')}`; };
+  const lo = from < shift(-90) ? shift(-90) : from;
+  const hi = to > shift(15) ? shift(15) : to;
+  if (lo > hi) return {};
+  const key = `${place}|${lo}|${hi}`;
+  const hit = rangeCache.get(key);
+  if (hit && Date.now() - hit.at < 20 * 60 * 1000) return hit.data;
+  const [lat, lon] = PLACES[place];
+  const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
+    `&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max,uv_index_max&timezone=Asia%2FBangkok&start_date=${lo}&end_date=${hi}`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    if (!res.ok) throw new Error(`open-meteo ${res.status}`);
+    const d = (await res.json()).daily as Record<string, (number | string | null)[]>;
+    const out: Record<string, DayWeather> = {};
+    (d.time as string[]).forEach((date, i) => {
+      const tMax = d.temperature_2m_max[i] as number | null, tMin = d.temperature_2m_min[i] as number | null;
+      if (tMax == null || tMin == null) return;
+      const rain = (d.precipitation_probability_max?.[i] as number | null) ?? 0;
+      const uv = (d.uv_index_max?.[i] as number | null) ?? 0;
+      const cond = rain >= 60 ? 'Mưa' : rain >= 35 ? 'Có thể mưa' : tMax <= 18 ? 'Trời lạnh' : uv >= 7 ? 'Nắng gắt' : uv >= 3 ? 'Nắng nhẹ' : tMax <= 23 ? 'Trời mát' : 'Trời dịu';
+      out[date] = { t_min: Math.round(tMin), t_max: Math.round(tMax), rain_pct: Math.round(rain), cond };
+    });
+    rangeCache.set(key, { at: Date.now(), data: out });
+    return out;
+  } catch {
+    return {};
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export const api = {
+  weatherRange: fetchWeatherRange,
   profileGet: () => call<{ profile: Profile | null; restore_code: string | null }>('profile.get'),
   profileSave: (profile: Profile) => call<{ profile: Profile; restore_code: string }>('profile.save', { profile }),
   profileRestore: (restore_code: string) => call<{ device_id: string }>('profile.restore', { restore_code }),
@@ -157,8 +199,9 @@ export const api = {
 
 // Separate function so the image-generation flow cannot break the core API.
 export const tryonApi = {
-  create: (item_ids: string[], body_image_base64: string | null) =>
-    post<{ job_id: string }>(TRYON_URL, 'tryon.create', { item_ids, body_image_base64 }, 60000),
+  // body_mode 'profile': no body photo, the model is drawn from the profile's height/weight/proportion.
+  create: (item_ids: string[], body_image_base64: string | null, body_mode?: 'profile') =>
+    post<{ job_id: string }>(TRYON_URL, 'tryon.create', { item_ids, body_image_base64, body_mode }, 60000),
   status: (job_id: string) =>
     post<{ status: 'pending' | 'done' | 'failed'; image_url: string | null; error: string | null }>(TRYON_URL, 'tryon.status', { job_id }, 20000),
 };
