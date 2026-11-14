@@ -47,6 +47,14 @@ export interface Item {
 // AI-suggested piece to buy; `query` is the Vietnamese keyword used to open shop searches.
 export interface ShopSuggestion { name: string; kind: Kind; color_name: string; why: string; query: string; price_hint: string }
 
+export type Shop = 'Shopee' | 'Lazada' | 'TikTok Shop';
+// A piece from the shop inventory: same fields as a wardrobe Item (so outfit views can draw it) plus where to buy it.
+export interface Product extends Item { price: number; shop: Shop; shop_url: string }
+// AI pick from the shop inventory for this user's wardrobe.
+export interface ProductPick { id: string; why: string }
+// What pairs with one shop product: owned item ids and other shop product ids, each with a short reason.
+export interface ProductMatch { own: ProductPick[]; shop: ProductPick[] }
+
 export interface WeatherPart {
   t: number; // °C
   cond: string; // "Nắng nhẹ", "Mưa rào", ...

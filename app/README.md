@@ -76,6 +76,7 @@ Log backend: Supabase Dashboard → Edge Functions → `api` / `tryon` → Logs 
 - Phần lõi không giả lập: đọc ảnh, tách nền, phối đồ, sửa theo chat và ảnh mặc thử đều gọi AI thật; tủ đồ lưu ở Postgres, thời tiết lấy thật từ Open-Meteo.
 - Chế độ xem "Trên người" là hình vẽ 2D dựng theo chiều cao và tỉ lệ cơ thể trong hồ sơ, không phải mô hình 3D đo từ ảnh.
 - Các bước "AI đang phối đồ" / "AI đang đọc ảnh" (`src/components/ThoughtLine.tsx`) hiện theo hẹn giờ vì server chỉ trả kết quả một lần; nội dung bước là đúng dữ liệu AI nhận, đồng hồ và số bộ là đo thật.
+- Kho "Gợi ý mua" (Tủ đồ → Gợi ý mua, và "Từ shop" ở Phối đồ): khoảng 30 ảnh sản phẩm lấy từ bộ dữ liệu H&M trên Kaggle (chỉ dùng phi thương mại), nạp vào backend dưới thiết bị `catalog_hm_v1` (`tools/hm_sample.py --seed-device catalog_hm_v1`). Giá và sàn (Shopee / Lazada / TikTok Shop) được gán cố định theo từng món, link mở trang tìm kiếm của sàn; chưa nối API sàn. Việc AI chọn món hợp tủ đồ (`catalog.pick`) và tìm món phối cùng (`catalog.match`) là AI thật. Ảnh không nằm trong repo hay bản app.
 - Các giai đoạn khi chờ ảnh mặc thử (`RefineFrame` trong `src/screens/TryOn.tsx`) chạy theo thời gian đã chờ; ảnh thật chỉ có ở bước cuối.
 
 ## Làm trước vs. làm trong ngày

@@ -2,7 +2,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, Image, Pressable, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { api } from '../api';
-import { ShopSuggestions } from '../components/ShopSuggestions';
+import { ShopCatalog } from '../components/ShopCatalog';
 import { ThoughtLine } from '../components/ThoughtLine';
 import { pickPhoto, takePhoto, type Photo } from '../photo';
 import { C, R, S, T } from '../theme';
@@ -32,7 +32,7 @@ function Rise({ delay, children }: { delay: number; children: React.ReactNode })
   );
 }
 
-export default function Wardrobe({ items, loading, removeBg, onReload, autoAdd, onAutoAddHandled, onOpenProfile }: { items: Item[]; loading: boolean; removeBg: boolean; onReload: () => Promise<void>; autoAdd: 'camera' | 'library' | null; onAutoAddHandled: () => void; onOpenProfile: () => void }) {
+export default function Wardrobe({ items, loading, removeBg, onReload, autoAdd, onAutoAddHandled, onOpenProfile, onOpenStudio }: { items: Item[]; loading: boolean; removeBg: boolean; onReload: () => Promise<void>; autoAdd: 'camera' | 'library' | null; onAutoAddHandled: () => void; onOpenProfile: () => void; onOpenStudio: () => void }) {
   const [filter, setFilter] = useState<Filter>('all');
   const [tab, setTab] = useState<'mine' | 'shop'>('mine');
   const [query, setQuery] = useState('');
@@ -144,7 +144,7 @@ export default function Wardrobe({ items, loading, removeBg, onReload, autoAdd, 
             </Pressable>
           ))}
         </View>
-        {tab === 'shop' ? <ShopSuggestions items={items} /> : (
+        {tab === 'shop' ? <ShopCatalog items={items} onOpenStudio={onOpenStudio} /> : (
           <>
             {error ? <ErrorBox message={error} onRetry={() => setError(null)} /> : null}
             <TextInput value={query} onChangeText={setQuery} placeholder="Tìm trong tủ đồ" placeholderTextColor={C.sub}

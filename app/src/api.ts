@@ -1,6 +1,6 @@
 // Client for the `api` Edge Function. The app never talks to the database directly.
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import type { Commute, Item, Outfit, Plan, PlanStatus, Profile, ShopSuggestion, Weather } from './types';
+import type { Commute, Item, Outfit, Plan, PlanStatus, Product, ProductMatch, ProductPick, Profile, ShopSuggestion, Weather } from './types';
 
 const API_URL = `${process.env.EXPO_PUBLIC_SUPABASE_URL}/functions/v1/api`;
 const TRYON_URL = `${process.env.EXPO_PUBLIC_SUPABASE_URL}/functions/v1/tryon`;
@@ -148,6 +148,10 @@ export const api = {
   outfitEdit: (date: string, text: string) => call<{ plan: Plan; message: string }>('outfit.edit', { date, text }, 60000),
   // AI looks at the wardrobe + profile and names 4-6 missing pieces to buy.
   shopSuggest: () => call<{ suggestions: ShopSuggestion[] }>('shop.suggest', {}, 60000),
+  // Shop inventory and the AI's picks from it for this wardrobe.
+  catalogList: () => call<{ products: Product[] }>('catalog.list'),
+  catalogPick: () => call<{ picks: ProductPick[] }>('catalog.pick', {}, 60000),
+  catalogMatch: (product_id: string) => call<ProductMatch>('catalog.match', { product_id }, 60000),
   planSet: (date: string, status: PlanStatus, outfit?: Outfit) => call<{ plan: Plan }>('plan.set', { date, status, outfit }),
 };
 

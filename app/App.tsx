@@ -130,7 +130,7 @@ export default function App() {
       />
     );
   } else if (tab === 'wardrobe') {
-    body = <Wardrobe items={items} loading={itemsLoading} removeBg={removeBg} onReload={loadItems} autoAdd={autoAdd} onAutoAddHandled={() => setAutoAdd(null)} onOpenProfile={openProfile} />;
+    body = <Wardrobe items={items} loading={itemsLoading} removeBg={removeBg} onReload={loadItems} autoAdd={autoAdd} onAutoAddHandled={() => setAutoAdd(null)} onOpenProfile={openProfile} onOpenStudio={() => setTab('studio')} />;
   } else if (tab === 'calendar' || tab === 'studio' || tab === 'stylist') {
     const Tabbed = tab === 'calendar' ? Calendar : tab === 'studio' ? Studio : Stylist;
     body = <Tabbed items={items} profile={profile} onOpenTryOn={openTryOn} onPlanChanged={planChanged} onOpenProfile={openProfile} />;

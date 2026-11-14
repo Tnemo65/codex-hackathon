@@ -11,6 +11,9 @@ const BUCKET = "wardrobe";
 const SIGN_SECONDS = 60 * 60 * 24 * 7;
 const MAX_IMAGE_B64 = 2_000_000; // about 1.5 MB of JPEG
 const MAX_ITEMS_FOR_AI = 60;
+// ponytail: the shop inventory is H&M sample photos stored as ordinary items of one device; price and shop are
+// assigned per item from a stable hash, not live marketplace data.
+const CATALOG_DEVICE = "catalog_hm_v1";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -364,6 +367,53 @@ function humanize(text: string, toLong: Map<string, string>, byId: Map<string, R
   }).replace(/\s{2,}/g, " ").trim();
 }
 
+// ---------- shop catalog ----------
+const PRICE_RANGE: Record<string, [number, number]> = {
+  top: [159000, 349000], bottom: [199000, 449000], dress: [299000, 599000], outer: [399000, 899000], shoes: [299000, 799000], bag: [199000, 599000],
+};
+const SHOPS = [
+  { shop: "Shopee", url: "https://shopee.vn/search?keyword=" },
+  { shop: "Lazada", url: "https://www.lazada.vn/catalog/?q=" },
+  { shop: "TikTok Shop", url: "https://www.tiktok.com/search?q=" },
+] as const;
+
+// Same item id always gives the same price and shop.
+async function toProducts(rows: Row[]) {
+  const items = await toItems(rows);
+  return items.map((it) => {
+    const h = [...String(it.id)].reduce((s, c) => s + c.charCodeAt(0), 0);
+    const [lo, hi] = PRICE_RANGE[it.kind] ?? PRICE_RANGE.top;
+    const price = Math.round((lo + ((h * 7919) % 101) / 100 * (hi - lo)) / 1000) * 1000;
+    const s = SHOPS[h % SHOPS.length];
+    return { ...it, price, shop: s.shop, shop_url: s.url + encodeURIComponent(it.name) };
+  });
+}
+
+const PICK_SCHEMA = {
+  type: "object", additionalProperties: false, required: ["picks"],
+  properties: { picks: { type: "array", items: {
+    type: "object", additionalProperties: false, required: ["id", "why"],
+    properties: {
+      id: { type: "string", description: "Mã món lấy đúng từ kho (vd p3)" },
+      why: { type: "string", description: "1 câu: món này phối được với món nào người dùng đang có (gọi bằng tên)" },
+    },
+  } } },
+};
+
+const MATCH_ITEM = {
+  type: "array", items: {
+    type: "object", additionalProperties: false, required: ["id", "why"],
+    properties: {
+      id: { type: "string", description: "Mã món lấy đúng từ danh sách (vd i2 hoặc p5)" },
+      why: { type: "string", description: "1 câu ngắn: vì sao món này hợp với sản phẩm đang xem" },
+    },
+  },
+};
+const MATCH_SCHEMA = {
+  type: "object", additionalProperties: false, required: ["own", "shop"],
+  properties: { own: MATCH_ITEM, shop: MATCH_ITEM },
+};
+
 async function loadContext(device: string) {
   const [prof] = await sql`select data from profiles where device_id = ${device}`;
   const items = await sql`select ${ITEM_COLS} from items where device_id = ${device} order by created_at desc limit ${MAX_ITEMS_FOR_AI}`;
@@ -562,6 +612,97 @@ async function route(action: string, device: string, body: any): Promise<unknown
       console.log("shop.suggest", { ms: Date.now() - t0, model: STYLIST_MODEL, items: items.length, n: suggestions.length });
       if (!suggestions.length) throw new HttpError(502, "AI chưa gợi ý được món nào, thử lại nhé.");
       return { suggestions };
+    }
+    case "catalog.list": {
+      const rows = await sql`select ${ITEM_COLS} from items where device_id = ${CATALOG_DEVICE} order by created_at desc limit 200`;
+      return { products: await toProducts(rows as unknown as Row[]) };
+    }
+    case "catalog.pick": {
+      const { profile, items } = await loadContext(device);
+      const catalog = await sql`select ${ITEM_COLS} from items where device_id = ${CATALOG_DEVICE} order by created_at desc limit 100` as unknown as Row[];
+      if (!catalog.length) throw new HttpError(409, "Kho gợi ý đang cập nhật, thử lại sau nhé.");
+      const toLong = new Map<string, string>();
+      const shop = catalog.map((it, i) => {
+        toLong.set(`p${i + 1}`, it.id);
+        return { id: `p${i + 1}`, name: it.name, kind: it.kind, category: it.category, color: it.color_name, material: it.material,
+          occasions: it.occasions, fit: it.fit };
+      });
+      const owned = items.map((it) => ({ name: it.name, kind: it.kind, color: it.color_name }));
+      const t0 = Date.now();
+      const res = await openai().responses.create({
+        model: STYLIST_MODEL,
+        reasoning: { effort: "low" },
+        max_output_tokens: 2000,
+        instructions: "Bạn là stylist cá nhân trong app tủ đồ của người Việt. Chọn 6-10 món trong kho cửa hàng giúp người dùng phối thêm được nhiều bộ với đồ họ đang có. " +
+          "Hợp nghề nghiệp, quy định ăn mặc, phong cách và phom người dùng thích. Không chọn món trùng với món người dùng đã có (cùng loại, cùng màu). " +
+          "Nếu tủ đồ trống thì chọn theo hồ sơ. Gọi món trong kho bằng đúng mã (p1, p2...) chỉ ở trường id. " +
+          "Mỗi món có why: một câu nói nó phối với món nào người dùng đang có (gọi bằng tên, không viết mã). Không nhắc thương hiệu, không emoji. Trả lời tiếng Việt, ngắn gọn.",
+        input: `Người dùng: ${describeUser(profile)}\nTủ đồ hiện có: ${JSON.stringify(owned)}\nKho cửa hàng: ${JSON.stringify(shop)}`,
+        text: { format: { type: "json_schema", name: "picks", strict: true, schema: PICK_SCHEMA } },
+      // deno-lint-ignore no-explicit-any
+      } as any);
+      const seen = new Set<string>();
+      const picks: { id: string; why: string }[] = [];
+      for (const p of JSON.parse(res.output_text).picks as Row[]) {
+        const id = toLong.get(String(p.id));
+        const why = clip(String(p.why ?? "").replace(/\bp\d+\b/g, "").replace(/\s{2,}/g, " ").trim(), 300);
+        if (!id || seen.has(id) || !why) continue;
+        seen.add(id);
+        picks.push({ id, why });
+      }
+      console.log("catalog.pick", { ms: Date.now() - t0, model: STYLIST_MODEL, owned: items.length, catalog: catalog.length, n: picks.length });
+      if (!picks.length) throw new HttpError(502, "AI chưa chọn được món nào, thử lại nhé.");
+      return { picks: picks.slice(0, 10) };
+    }
+    case "catalog.match": {
+      const pid = clip(body.product_id, 40);
+      const [target] = await sql`select ${ITEM_COLS} from items where id::text = ${pid} and device_id = ${CATALOG_DEVICE}` as unknown as Row[];
+      if (!target) throw new HttpError(404, "Không tìm thấy sản phẩm.");
+      const { profile, items } = await loadContext(device);
+      const others = await sql`select ${ITEM_COLS} from items where device_id = ${CATALOG_DEVICE} and id::text <> ${pid} order by created_at desc limit 100` as unknown as Row[];
+      const ownLong = new Map<string, string>(), shopLong = new Map<string, string>();
+      const brief = (it: Row, id: string) => ({ id, name: it.name, kind: it.kind, color: it.color_name, material: it.material });
+      const own = items.map((it, i) => (ownLong.set(`i${i + 1}`, it.id), brief(it, `i${i + 1}`)));
+      const shop = others.map((it, i) => (shopLong.set(`p${i + 1}`, it.id), brief(it, `p${i + 1}`)));
+      const t0 = Date.now();
+      const res = await openai().responses.create({
+        model: STYLIST_MODEL,
+        reasoning: { effort: "low" },
+        max_output_tokens: 1500,
+        instructions: "Bạn là stylist cá nhân trong app tủ đồ của người Việt. Người dùng đang xem một sản phẩm; chọn tối đa 4 món trong tủ đồ của họ (own) " +
+          "và tối đa 4 sản phẩm khác trong kho (shop) để phối cùng thành một bộ hợp lý. Không chọn món cùng loại (kind) với sản phẩm đang xem, " +
+          "không ghép hai món cùng loại; váy liền (dress) không cần quần hoặc chân váy. " +
+          (own.length ? "" : "Tủ đồ trống: own phải là mảng rỗng. ") +
+          "Gọi món bằng đúng mã (i1.., p1..) chỉ ở trường id; trong why gọi món bằng tên, không viết mã. Mỗi món có why: một câu ngắn. Không nhắc thương hiệu, không emoji. Trả lời tiếng Việt.",
+        input: `Người dùng: ${describeUser(profile)}\nSản phẩm đang xem: ${JSON.stringify(brief(target, "target"))}\n` +
+          `Tủ đồ của người dùng: ${JSON.stringify(own)}\nKho cửa hàng: ${JSON.stringify(shop)}`,
+        text: { format: { type: "json_schema", name: "match", strict: true, schema: MATCH_SCHEMA } },
+      // deno-lint-ignore no-explicit-any
+      } as any);
+      const out = JSON.parse(res.output_text);
+      const byLong = new Map<string, Row>([...items, ...others].map((it) => [it.id as string, it]));
+      const bad = target.kind === "dress" ? ["dress", "top", "bottom"] : target.kind === "top" || target.kind === "bottom" ? [target.kind, "dress"] : [target.kind];
+      const seen = new Set<string>();
+      // One piece per kind within each list; the shop list may offer an alternative to a kind the user owns.
+      const pick = (list: Row[], toLong: Map<string, string>) => {
+        const kinds = new Set<string>(bad);
+        const picked: { id: string; why: string }[] = [];
+        for (const p of list ?? []) {
+          const id = toLong.get(String(p.id));
+          const it = id ? byLong.get(id) : null;
+          const why = clip(String(p.why ?? "").replace(/\b[ip]\d+\b/g, "").replace(/\s{2,}/g, " ").trim(), 200);
+          if (!id || !it || !why || seen.has(id) || kinds.has(it.kind)) continue;
+          seen.add(id);
+          kinds.add(it.kind);
+          picked.push({ id, why });
+          if (picked.length === 4) break;
+        }
+        return picked;
+      };
+      const ownPicks = own.length ? pick(out.own, ownLong) : [];
+      const shopPicks = pick(out.shop, shopLong);
+      console.log("catalog.match", { ms: Date.now() - t0, model: STYLIST_MODEL, owned: items.length, catalog: others.length, own: ownPicks.length, shop: shopPicks.length });
+      return { own: ownPicks, shop: shopPicks };
     }
     case "outfit.edit": {
       const date = checkDate(body.date);
