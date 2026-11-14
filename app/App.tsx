@@ -50,7 +50,16 @@ export default function App() {
   const loadItems = useCallback(async () => {
     setItemsLoading(true);
     try {
-      setItems((await api.itemsList()).items);
+      const fresh = (await api.itemsList()).items;
+      // Signed URLs change on every list call; keep the URLs we already loaded when the picture is unchanged
+      // (same item, cut-out still present or still missing) so images come from cache instead of downloading again.
+      setItems((prev) => {
+        const old = new Map(prev.map((i) => [i.id, i]));
+        return fresh.map((i) => {
+          const o = old.get(i.id);
+          return o && !!o.cutout_url === !!i.cutout_url ? { ...i, image_url: o.image_url, cutout_url: o.cutout_url } : i;
+        });
+      });
     } finally {
       setItemsLoading(false);
     }

@@ -207,8 +207,9 @@ async function loadGarments(device: string, ids: string[]): Promise<File[]> {
       console.error("garment download", id, error?.message);
       continue;
     }
-    const isPng = /\.png$/i.test(row.cutout_path ?? row.image_path);
-    files.push(await toFile(data, `garment-${files.length + 1}.${isPng ? "png" : "jpg"}`, { type: isPng ? "image/png" : "image/jpeg" }));
+    // Use the stored file's real type: cut-outs may be PNG or WebP (older .png names can hold WebP after the size fix).
+    const type = ["image/png", "image/webp", "image/jpeg"].includes(data.type) ? data.type : /\.png$/i.test(row.cutout_path ?? row.image_path) ? "image/png" : "image/jpeg";
+    files.push(await toFile(data, `garment-${files.length + 1}.${type.split("/")[1]}`, { type }));
   }
   return files;
 }

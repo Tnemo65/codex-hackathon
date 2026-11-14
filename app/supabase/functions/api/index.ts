@@ -280,7 +280,9 @@ async function cutoutWithAI(id: string, device: string, bytes: Uint8Array, tall:
         "Show only the garment, centred, on a fully transparent background. The whole garment must fit inside the frame with a small " +
         "empty margin on every side; do not crop any part of it. No person, hanger, mannequin, text or shadow.",
       background: "transparent",
-      output_format: "png",
+      // WebP keeps transparency at ~1/10 of the PNG size (PNG cut-outs were 1-2 MB and made the wardrobe grid slow).
+      output_format: "webp",
+      output_compression: 75,
       quality: "low",
       size: tall ? "1024x1536" : "1024x1024",
     };
@@ -288,8 +290,8 @@ async function cutoutWithAI(id: string, device: string, bytes: Uint8Array, tall:
     const res = await openai().images.edit(params);
     const b64 = res.data?.[0]?.b64_json;
     if (!b64) throw new Error("no image returned");
-    const path = `items/${device}/${id}.png`;
-    const up = await storage().from(BUCKET).upload(path, decodeB64(b64), { contentType: "image/png", upsert: true });
+    const path = `items/${device}/${id}.webp`;
+    const up = await storage().from(BUCKET).upload(path, decodeB64(b64), { contentType: "image/webp", upsert: true });
     if (up.error) throw new Error(up.error.message);
     await sql`update items set cutout_path = ${path} where id = ${id} and device_id = ${device}`;
     console.log("cutout.ai", { ms: Date.now() - t0, model: CUTOUT_MODEL });
