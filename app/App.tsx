@@ -18,6 +18,7 @@ import { BOTTOM_INSET, ErrorBox, Icon, Loading } from './src/ui';
 
 type Tab = 'today' | 'calendar' | 'wardrobe' | 'studio' | 'stylist' | 'tryon' | 'profile';
 const REMOVE_BG_KEY = 'tudo.remove_bg';
+const KEEP: Tab[] = ['today', 'wardrobe']; // tabs kept mounted between switches
 // The five tabs from the Figma nav; Hồ sơ opens from the avatar, Mặc thử from Hôm nay / Phối đồ / Stylist.
 const TABS: { id: Tab; label: string; icon: 'home' | 'calendar' | 'hanger' | 'layers' | 'chat' }[] = [
   { id: 'today', label: 'Hôm nay', icon: 'home' },
@@ -41,6 +42,10 @@ export default function App() {
   const [autoAdd, setAutoAdd] = useState<'camera' | 'library' | null>(null);
   const [removeBg, setRemoveBg] = useState(false);
   const [todayKey, setTodayKey] = useState(0); // bump to make Today reload its plan
+  const [visited, setVisited] = useState<Tab[]>(['today']);
+  useEffect(() => {
+    if (KEEP.includes(tab)) setVisited((v) => (v.includes(tab) ? v : [...v, tab]));
+  }, [tab]);
 
   const loadItems = useCallback(async () => {
     setItemsLoading(true);
@@ -129,8 +134,8 @@ export default function App() {
         }}
       />
     );
-  } else if (tab === 'wardrobe') {
-    body = <Wardrobe items={items} loading={itemsLoading} removeBg={removeBg} onReload={loadItems} autoAdd={autoAdd} onAutoAddHandled={() => setAutoAdd(null)} onOpenProfile={openProfile} onOpenStudio={() => setTab('studio')} />;
+  } else if (KEEP.includes(tab)) {
+    body = null; // Hôm nay / Tủ đồ stay mounted below
   } else if (tab === 'calendar' || tab === 'studio' || tab === 'stylist') {
     const Tabbed = tab === 'calendar' ? Calendar : tab === 'studio' ? Studio : Stylist;
     body = <Tabbed items={items} profile={profile} onOpenTryOn={openTryOn} onPlanChanged={planChanged} onOpenProfile={openProfile} />;
@@ -149,25 +154,33 @@ export default function App() {
         onRedoOnboarding={() => setOnboarding(true)}
       />
     );
-  } else {
-    body = (
-      <Today
-        key={todayKey}
-        profile={profile}
-        items={items}
-        onOpenTryOn={openTryOn}
-        onGoWardrobe={() => setTab('wardrobe')}
-        onItemsChanged={() => void loadItems().catch(() => {})}
-      />
-    );
   }
 
-  const showTabs = !booting && !bootError && !onboarding && !!profile && tab !== 'tryon';
+  const ready = !booting && !bootError && !onboarding && !!profile;
+  const showTabs = ready && tab !== 'tryon';
+  // Kept screens are mounted once and hidden when inactive, so switching back does not refetch the plan,
+  // weather and images. Calendar, Phối đồ and Stylist still remount to pick up plan changes and queued picks.
+  const kept = ready && profile ? visited.map((t) => (
+    <View key={t} style={{ flex: 1, display: tab === t ? 'flex' : 'none' }}>
+      {t === 'today' ? (
+        <Today
+          key={todayKey}
+          profile={profile}
+          items={items}
+          onOpenTryOn={openTryOn}
+          onGoWardrobe={() => setTab('wardrobe')}
+          onItemsChanged={() => void loadItems().catch(() => {})}
+        />
+      ) : (
+        <Wardrobe items={items} loading={itemsLoading} removeBg={removeBg} onReload={loadItems} autoAdd={autoAdd} onAutoAddHandled={() => setAutoAdd(null)} onOpenProfile={openProfile} onOpenStudio={() => setTab('studio')} />
+      )}
+    </View>
+  )) : null;
 
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
       <View style={{ flex: 1, width: '100%', maxWidth: 520, alignSelf: 'center' }}>
-        <View style={{ flex: 1 }}>{body}</View>
+        <View style={{ flex: 1 }}>{body}{kept}</View>
         {showTabs ? (
           <View style={{ flexDirection: 'row', backgroundColor: C.card, borderTopWidth: 1, borderTopColor: C.line, paddingTop: 12, paddingBottom: 15 + BOTTOM_INSET }}>
             {TABS.map((t) => {
