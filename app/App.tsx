@@ -98,7 +98,7 @@ export default function App() {
 
   let body: React.ReactNode;
   if (booting) {
-    body = <View style={{ flex: 1, justifyContent: 'center' }}><Loading text="Đang mở tủ đồ…" /></View>;
+    body = <View style={{ flex: 1, justifyContent: 'center', padding: 20 }}><Loading text="Đang mở tủ đồ…" /></View>;
   } else if (bootError) {
     body = <View style={{ flex: 1, justifyContent: 'center', padding: 20 }}><ErrorBox message={bootError} onRetry={boot} /></View>;
   } else if (onboarding || !profile) {

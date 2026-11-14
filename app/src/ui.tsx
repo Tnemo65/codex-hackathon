@@ -1,6 +1,6 @@
 // Shared UI primitives matching the Figma look. Screens should use these instead of restyling.
 import React from 'react';
-import { ActivityIndicator, Modal, Platform, Pressable, ScrollView, StatusBar, StyleSheet, Text, View, type ViewStyle } from 'react-native';
+import { ActivityIndicator, Animated, Easing, Modal, Platform, Pressable, ScrollView, StatusBar, StyleSheet, Text, View, type ViewStyle } from 'react-native';
 import Svg, { Circle, Path } from 'react-native-svg';
 import { C, R, S, T } from './theme';
 
@@ -139,11 +139,29 @@ export function Sheet({ visible, onClose, title, subtitle, children }: { visible
   );
 }
 
+// Skeleton placeholder: pulsing blocks shaped like the content, so a wait never looks frozen.
 export function Loading({ text }: { text: string }) {
+  const pulse = React.useRef(new Animated.Value(0.45)).current;
+  React.useEffect(() => {
+    const loop = Animated.loop(Animated.sequence([
+      Animated.timing(pulse, { toValue: 1, duration: 650, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+      Animated.timing(pulse, { toValue: 0.45, duration: 650, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+    ]));
+    loop.start();
+    return () => loop.stop();
+  }, [pulse]);
+  const bar = (w: number | `${number}%`, h: number) => <View style={{ width: w, height: h, borderRadius: 10, backgroundColor: C.pink }} />;
   return (
-    <View style={{ alignItems: 'center', gap: 10, padding: 24 }}>
-      <ActivityIndicator color={C.wine} />
-      <Text style={T.sub}>{text}</Text>
+    <View style={{ gap: 12, paddingVertical: 8 }} accessibilityLiveRegion="polite" accessibilityLabel={text}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        <ActivityIndicator size="small" color={C.wine} />
+        <Text style={T.sub}>{text}</Text>
+      </View>
+      <Animated.View style={{ opacity: pulse, backgroundColor: C.card, borderRadius: R.card, padding: 16, gap: 10 }}>
+        {bar('100%', 150)}
+        {bar('70%', 14)}
+        {bar('45%', 14)}
+      </Animated.View>
     </View>
   );
 }
