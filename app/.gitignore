@@ -42,3 +42,10 @@ yarn-error.*
 
 # env (secrets never committed)
 .env
+
+# Supabase CLI local state
+supabase/.temp/
+supabase/.branches/
+
+# scratch files (rule.md)
+.scratch/

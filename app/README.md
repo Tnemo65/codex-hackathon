@@ -42,6 +42,22 @@ npm run ship -- "mô tả thay đổi"
 
 Mở trên iPhone: Expo Go (đăng nhập tài khoản `dacthinh`) → mở `exp://u.expo.dev/b8772d62-9cd4-4e24-be17-6e6bb8ffd63c?channel-name=preview`.
 
+Bản cài đặt Android (cho demo chấm điểm, mở lại không cần laptop):
+
+```bash
+EAS_NO_VCS=1 npx eas-cli build --platform android --profile preview
+```
+
+`EAS_NO_VCS=1` là bắt buộc: `.gitignore` ở thư mục gốc repo whitelist `/app/` khiến EAS đóng gói thiếu `package.json`.
+
+Bản APK nhận cập nhật JS qua `npm run ship` (cùng channel `preview`, runtime `exposdk:58.0.0`); đóng hẳn rồi mở lại app để tải bản mới.
+
+Bản web cho người dùng thử (trình duyệt, không tính cho phần demo trên điện thoại): https://tudo-ai.expo.app
+
+```bash
+npx expo export --platform web && npx eas-cli deploy --prod
+```
+
 Log backend: Supabase Dashboard → Edge Functions → `suggest-outfit` → Logs (`request` / `result` / `failed`).
 
 ## Giả lập (mock)
