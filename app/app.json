@@ -1,0 +1,40 @@
+{
+  "expo": {
+    "name": "Tủ đồ",
+    "slug": "tudo-ai",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.dacthinh.tudoai"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "package": "com.dacthinh.tudoai"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "output": "single"
+    },
+    "owner": "dacthinh",
+    "runtimeVersion": {
+      "policy": "sdkVersion"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "b8772d62-9cd4-4e24-be17-6e6bb8ffd63c"
+      }
+    },
+    "updates": {
+      "url": "https://u.expo.dev/b8772d62-9cd4-4e24-be17-6e6bb8ffd63c"
+    }
+  }
+}

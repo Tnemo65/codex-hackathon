@@ -1,0 +1,8 @@
+# Public repo: only the paths whitelisted below are published.
+# Everything else at the top level (idea/, research/, notes, backups) stays local.
+/*
+!/.gitignore
+!/CLAUDE.md
+!/CONTEXT.md
+!/rule.md
+!/app/
