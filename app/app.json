@@ -34,7 +34,20 @@
       }
     },
     "updates": {
-      "url": "https://u.expo.dev/b8772d62-9cd4-4e24-be17-6e6bb8ffd63c"
-    }
+      "url": "https://u.expo.dev/b8772d62-9cd4-4e24-be17-6e6bb8ffd63c",
+      "requestHeaders": {
+        "expo-channel-name": "preview"
+      }
+    },
+    "plugins": [
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Tủ đồ cần truy cập ảnh để bạn chọn ảnh quần áo.",
+          "cameraPermission": "Tủ đồ cần dùng camera để bạn chụp quần áo.",
+          "microphonePermission": false
+        }
+      ]
+    ]
   }
 }

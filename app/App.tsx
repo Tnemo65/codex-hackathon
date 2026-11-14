@@ -1,114 +1,181 @@
+// App shell: boot (profile + wardrobe), onboarding, tab bar. Screens live in src/screens.
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { StatusBar } from 'expo-status-bar';
-import { useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useEffect, useState } from 'react';
+import { Pressable, Text, View } from 'react-native';
+import { api, setDeviceId, todayStr } from './src/api';
+import Onboarding from './src/screens/Onboarding';
+import ProfileScreen from './src/screens/ProfileScreen';
+import Today from './src/screens/Today';
+import TryOn, { TRYON_READY } from './src/screens/TryOn';
+import Wardrobe from './src/screens/Wardrobe';
+import { C } from './src/theme';
+import type { Item, Profile } from './src/types';
+import { BOTTOM_INSET, ErrorBox, Icon, Loading } from './src/ui';
 
-const FUNCTION_URL = `${process.env.EXPO_PUBLIC_SUPABASE_URL}/functions/v1/suggest-outfit`;
-const PUBLISHABLE_KEY = process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? '';
-const TIMEOUT_MS = 30000;
-
-// ponytail: hardcoded wardrobe and weather until photo recognition and a weather API are wired in.
-const WARDROBE = [
-  'Áo sơ mi trắng',
-  'Áo thun đen',
-  'Áo len be',
-  'Áo khoác jean',
-  'Quần tây xám',
-  'Quần jean xanh',
-  'Chân váy midi đen',
-  'Giày sneaker trắng',
-  'Giày loafer nâu',
+type Tab = 'today' | 'wardrobe' | 'tryon' | 'profile';
+const REMOVE_BG_KEY = 'tudo.remove_bg';
+const TABS: { id: Tab; label: string; icon: 'home' | 'hanger' | 'layers' | 'user' }[] = [
+  { id: 'today', label: 'Hôm nay', icon: 'home' },
+  { id: 'wardrobe', label: 'Tủ đồ', icon: 'hanger' },
+  ...(TRYON_READY ? [{ id: 'tryon' as Tab, label: 'Mặc thử', icon: 'layers' as const }] : []),
+  { id: 'profile', label: 'Hồ sơ', icon: 'user' },
 ];
-const WEATHER = 'Sáng 22°C, chiều 27°C có mưa rào, tối 19°C gió mạnh';
-const OCCASION = 'Đi làm văn phòng';
-
-type Outfit = { items: string[]; reason: string; tip: string };
 
 export default function App() {
-  const [outfit, setOutfit] = useState<Outfit | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [booting, setBooting] = useState(true);
+  const [bootError, setBootError] = useState<string | null>(null);
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [restoreCode, setRestoreCode] = useState<string | null>(null);
+  const [onboarding, setOnboarding] = useState(false);
+  const [items, setItems] = useState<Item[]>([]);
+  const [itemsLoading, setItemsLoading] = useState(false);
+  const [tab, setTab] = useState<Tab>('today');
+  const [tryOnIds, setTryOnIds] = useState<string[]>([]);
+  const [autoAdd, setAutoAdd] = useState<'camera' | 'library' | null>(null);
+  const [removeBg, setRemoveBg] = useState(false);
+  const [todayKey, setTodayKey] = useState(0); // bump to make Today reload its plan
 
-  async function suggest() {
-    setLoading(true);
-    setError(null);
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  const loadItems = useCallback(async () => {
+    setItemsLoading(true);
     try {
-      const res = await fetch(FUNCTION_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', apikey: PUBLISHABLE_KEY },
-        body: JSON.stringify({ wardrobe: WARDROBE, weather: WEATHER, occasion: OCCASION }),
-        signal: controller.signal,
-      });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(body.error ?? `Lỗi máy chủ (${res.status})`);
-      setOutfit(body);
-    } catch (e) {
-      const aborted = e instanceof Error && e.name === 'AbortError';
-      setError(aborted ? 'Mạng chậm quá, thử lại nhé.' : e instanceof Error ? e.message : 'Có lỗi xảy ra.');
+      setItems((await api.itemsList()).items);
     } finally {
-      clearTimeout(timer);
-      setLoading(false);
+      setItemsLoading(false);
     }
+  }, []);
+
+  const boot = useCallback(async () => {
+    setBooting(true);
+    setBootError(null);
+    try {
+      setRemoveBg((await AsyncStorage.getItem(REMOVE_BG_KEY)) === '1');
+      const { profile: p, restore_code } = await api.profileGet();
+      setProfile(p);
+      setRestoreCode(restore_code);
+      setOnboarding(!p);
+      if (p) await loadItems();
+    } catch (e) {
+      setBootError(e instanceof Error ? e.message : 'Không kết nối được máy chủ.');
+    } finally {
+      setBooting(false);
+    }
+  }, [loadItems]);
+
+  useEffect(() => {
+    void boot();
+  }, [boot]);
+
+  async function saveProfile(p: Profile) {
+    const r = await api.profileSave(p);
+    setProfile(r.profile);
+    setRestoreCode(r.restore_code);
   }
 
+  // Point this install at an existing wardrobe, then reload everything.
+  async function restore(code: string) {
+    const { device_id } = await api.profileRestore(code);
+    await setDeviceId(device_id);
+    setTab('today');
+    await boot();
+    setTodayKey((k) => k + 1);
+  }
+
+  let body: React.ReactNode;
+  if (booting) {
+    body = <View style={{ flex: 1, justifyContent: 'center' }}><Loading text="Đang mở tủ đồ…" /></View>;
+  } else if (bootError) {
+    body = <View style={{ flex: 1, justifyContent: 'center', padding: 20 }}><ErrorBox message={bootError} onRetry={boot} /></View>;
+  } else if (onboarding || !profile) {
+    body = (
+      <Onboarding
+        initial={profile ?? undefined}
+        onRestore={restore}
+        onDone={async (p, next) => {
+          await saveProfile(p);
+          setOnboarding(false);
+          await loadItems().catch(() => {});
+          if (next === 'home') setTab('today');
+          else {
+            setTab('wardrobe');
+            setAutoAdd(next === 'add_camera' ? 'camera' : 'library');
+          }
+        }}
+      />
+    );
+  } else if (tab === 'tryon') {
+    body = (
+      <TryOn
+        items={items}
+        profile={profile}
+        initialItemIds={tryOnIds}
+        onBack={() => setTab('today')}
+        onUseToday={(ids) => {
+          const outfit = { item_ids: ids, name: 'Bộ đã mặc thử', why: 'Bạn chọn bộ này sau khi xem ảnh phối.', fit_note: '', warnings: [] };
+          void api.planSet(todayStr(0), 'planned', outfit).catch(() => {}).then(() => {
+            setTodayKey((k) => k + 1);
+            setTab('today');
+          });
+        }}
+      />
+    );
+  } else if (tab === 'wardrobe') {
+    body = <Wardrobe items={items} loading={itemsLoading} removeBg={removeBg} onReload={loadItems} autoAdd={autoAdd} onAutoAddHandled={() => setAutoAdd(null)} />;
+  } else if (tab === 'profile') {
+    body = (
+      <ProfileScreen
+        profile={profile}
+        restoreCode={restoreCode}
+        removeBg={removeBg}
+        onToggleRemoveBg={(v) => {
+          setRemoveBg(v);
+          void AsyncStorage.setItem(REMOVE_BG_KEY, v ? '1' : '0');
+        }}
+        onSave={saveProfile}
+        onRestore={restore}
+        onRedoOnboarding={() => setOnboarding(true)}
+      />
+    );
+  } else {
+    body = (
+      <Today
+        key={todayKey}
+        profile={profile}
+        items={items}
+        onOpenTryOn={(ids) => {
+          setTryOnIds(ids);
+          setTab('tryon');
+        }}
+        onGoWardrobe={() => setTab('wardrobe')}
+        onItemsChanged={() => void loadItems().catch(() => {})}
+      />
+    );
+  }
+
+  const showTabs = !booting && !bootError && !onboarding && !!profile && tab !== 'tryon';
+
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <Text style={styles.title}>Hôm nay mặc gì?</Text>
-      <Text style={styles.meta}>{WEATHER}</Text>
-      <Text style={styles.meta}>{OCCASION}</Text>
-
-      <Pressable
-        style={[styles.button, loading && styles.buttonDisabled]}
-        onPress={suggest}
-        disabled={loading}
-        accessibilityRole="button"
-      >
-        <Text style={styles.buttonText}>{outfit || error ? 'Gợi ý bộ khác' : 'Chốt outfit cho tôi'}</Text>
-      </Pressable>
-
-      {loading && (
-        <View style={styles.row}>
-          <ActivityIndicator />
-          <Text style={styles.meta}>AI đang chọn đồ...</Text>
-        </View>
-      )}
-
-      {error && !loading && (
-        <View style={styles.card}>
-          <Text style={styles.error}>{error}</Text>
-          <Pressable onPress={suggest} accessibilityRole="button">
-            <Text style={styles.link}>Thử lại</Text>
-          </Pressable>
-        </View>
-      )}
-
-      {outfit && !loading && !error && (
-        <View style={styles.card}>
-          {outfit.items.map((item) => (
-            <Text key={item} style={styles.item}>• {item}</Text>
-          ))}
-          <Text style={styles.reason}>{outfit.reason}</Text>
-          <Text style={styles.tip}>Lời dặn: {outfit.tip}</Text>
-        </View>
-      )}
-      <StatusBar style="auto" />
-    </ScrollView>
+    <View style={{ flex: 1, backgroundColor: C.bg }}>
+      <View style={{ flex: 1, width: '100%', maxWidth: 520, alignSelf: 'center' }}>
+        <View style={{ flex: 1 }}>{body}</View>
+        {showTabs ? (
+          <View style={{ flexDirection: 'row', backgroundColor: C.card, borderTopWidth: 1, borderTopColor: C.line, paddingTop: 6, paddingBottom: 6 + BOTTOM_INSET }}>
+            {TABS.map((t) => {
+              const active = tab === t.id;
+              return (
+                <Pressable key={t.id} onPress={() => { if (t.id === 'tryon') setTryOnIds([]); setTab(t.id); }} accessibilityRole="tab" accessibilityState={{ selected: active }} accessibilityLabel={t.label}
+                  style={{ flex: 1, alignItems: 'center', gap: 2, minHeight: 48, justifyContent: 'center' }}>
+                  <View style={{ paddingHorizontal: 14, paddingVertical: 4, borderRadius: 12, backgroundColor: active ? C.pink : 'transparent' }}>
+                    <Icon name={t.icon} size={20} color={active ? C.wine : C.sub} />
+                  </View>
+                  <Text style={{ fontSize: 11, fontWeight: active ? '700' : '500', color: active ? C.wine : C.sub }}>{t.label}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        ) : null}
+      </View>
+      <StatusBar style="dark" />
+    </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { padding: 24, paddingTop: 80, gap: 12, backgroundColor: '#fff', flexGrow: 1 },
-  title: { fontSize: 28, fontWeight: '700', color: '#111' },
-  meta: { fontSize: 15, color: '#444' },
-  button: { backgroundColor: '#111', borderRadius: 12, paddingVertical: 16, alignItems: 'center', marginTop: 8 },
-  buttonDisabled: { opacity: 0.5 },
-  buttonText: { color: '#fff', fontSize: 17, fontWeight: '600' },
-  row: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  card: { borderWidth: 1, borderColor: '#ddd', borderRadius: 12, padding: 16, gap: 8 },
-  item: { fontSize: 17, color: '#111' },
-  reason: { fontSize: 15, color: '#333', marginTop: 4 },
-  tip: { fontSize: 15, color: '#0b5394' },
-  error: { fontSize: 15, color: '#b00020' },
-  link: { fontSize: 16, color: '#0b5394', fontWeight: '600', paddingVertical: 8 },
-});
