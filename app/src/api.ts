@@ -8,23 +8,44 @@ const KEY = process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? '';
 const DEVICE_KEY = 'tudo.device_id';
 
 let deviceId: string | null = null;
+let pendingId: Promise<string> | null = null;
 
-function randomId(): string {
-  const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
-  let s = '';
-  for (let i = 0; i < 24; i++) s += chars[Math.floor(Math.random() * chars.length)];
-  return `d_${s}`;
+// The device id is this install's only credential, so the server mints it with a cryptographic RNG
+// (React Native has no built-in secure random without an extra native module).
+async function mintDeviceId(): Promise<string> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 60000); // first call can hit a cold server start
+  try {
+    const res = await fetch(API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', apikey: KEY },
+      body: JSON.stringify({ action: 'device.new' }),
+      signal: controller.signal,
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok || typeof body.device_id !== 'string') throw new Error('Không kết nối được máy chủ.');
+    return body.device_id;
+  } catch {
+    throw new Error('Không kết nối được máy chủ. Kiểm tra mạng rồi thử lại nhé.');
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export async function getDeviceId(): Promise<string> {
   if (deviceId) return deviceId;
-  let id = await AsyncStorage.getItem(DEVICE_KEY);
-  if (!id) {
-    id = randomId();
-    await AsyncStorage.setItem(DEVICE_KEY, id);
-  }
-  deviceId = id;
-  return id;
+  pendingId ??= (async () => {
+    let id = await AsyncStorage.getItem(DEVICE_KEY);
+    if (!id) {
+      id = await mintDeviceId();
+      await AsyncStorage.setItem(DEVICE_KEY, id);
+    }
+    deviceId = id;
+    return id;
+  })().finally(() => {
+    pendingId = null;
+  });
+  return pendingId;
 }
 
 // Used after "profile.restore": point this install at an existing wardrobe.
@@ -37,17 +58,18 @@ export async function post<T>(url: string, action: string, payload: Record<strin
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', apikey: KEY },
-      body: JSON.stringify({ action, device_id: await getDeviceId(), ...payload }),
-      signal: controller.signal,
-    });
-    const body = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(body.error ?? `Lỗi máy chủ (${res.status})`);
-    return body as T;
+    const body = JSON.stringify({ action, device_id: await getDeviceId(), ...payload });
+    let res: Response;
+    try {
+      res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', apikey: KEY }, body, signal: controller.signal });
+    } catch {
+      // Android reports a timeout as "Fetch request has been canceled", not AbortError, so check the signal.
+      throw new Error(controller.signal.aborted ? 'Mạng chậm quá, thử lại nhé.' : 'Không kết nối được máy chủ. Kiểm tra mạng rồi thử lại nhé.');
+    }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error ?? `Lỗi máy chủ (${res.status})`);
+    return data as T;
   } catch (e) {
-    if (e instanceof Error && e.name === 'AbortError') throw new Error('Mạng chậm quá, thử lại nhé.');
     throw e instanceof Error ? e : new Error('Có lỗi xảy ra.');
   } finally {
     clearTimeout(timer);

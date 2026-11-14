@@ -1,10 +1,11 @@
 // "Hôm nay" screen (F3): daily outfit suggestion for today or tomorrow, confirm, chat edit.
 import React, { useEffect, useRef, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { Animated, PanResponder, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { api, dateLabel, todayStr } from '../api';
 import { ChatSheet } from '../components/ChatSheet';
 import { OutfitCanvas } from '../components/OutfitCanvas';
 import { OutfitOnBody } from '../components/OutfitOnBody';
+import { ThoughtLine, secs } from '../components/ThoughtLine';
 import { C, R, S, T } from '../theme';
 import { COMMUTE_LABEL, OCCASIONS, type Commute, type Item, type Outfit, type Plan, type Profile, type Weather } from '../types';
 import { Banner, Button, Card, Chip, ErrorBox, Icon, Loading, Sheet, TOP_INSET } from '../ui';
@@ -12,8 +13,11 @@ import { TRYON_READY } from './TryOn';
 
 const key = (o: Outfit | null | undefined) => (o ? [...o.item_ids].sort().join('|') : '');
 const errText = (e: unknown) => (e instanceof Error ? e.message : 'Có lỗi xảy ra.');
+const AI_BUSY = 'AI đang phối đồ cho bạn…';
 
 // Options to browse. If the selected outfit is not one of them (edited, or saved earlier), it takes the slot `at`.
+const doneText = (p: Plan, t0: number) => `Đã phối ${Math.max(1, p.options?.length ?? 0)} bộ trong ${secs(Date.now() - t0)}`;
+
 function optionList(p: Plan | null, at = 0): Outfit[] {
   if (!p) return [];
   const opts = p.options ?? [];
@@ -48,6 +52,7 @@ export default function Today({ profile, items, onOpenTryOn, onGoWardrobe, onIte
   const [note, setNote] = useState('');
   const [picker, setPicker] = useState<'occasion' | 'commute' | null>(null);
   const [chatOpen, setChatOpen] = useState(false);
+  const [aiDone, setAiDone] = useState<string | null>(null); // "Đã phối 3 bộ trong 6,2s", only for a suggestion made just now
   const req = useRef(0);
   const retry = useRef<() => void>(() => {});
   const dateRef = useRef(date);
@@ -77,15 +82,16 @@ export default function Today({ profile, items, onOpenTryOn, onGoWardrobe, onIte
   async function guard(text: string, again: () => void, fn: (alive: () => boolean) => Promise<void>) {
     const id = ++req.current;
     const alive = () => id === req.current;
-    retry.current = again; setBusy(text); setErr(null);
+    retry.current = again; setBusy(text); setErr(null); setAiDone(null);
     try { await fn(alive); } catch (e) { if (alive()) setErr(errText(e)); } finally { if (alive()) setBusy(null); }
   }
 
   function suggest(occ = occasion, com = commute) {
     if (tooSmall) return;
-    void guard('AI đang phối đồ cho bạn…', () => suggest(occ, com), async (alive) => {
+    void guard(AI_BUSY, () => suggest(occ, com), async (alive) => {
+      const t0 = Date.now();
       const { plan: p } = await api.outfitSuggest(date, occ, com);
-      if (alive()) { applyPlan(p, 0); setEmpty(false); setNote(''); }
+      if (alive()) { applyPlan(p, 0); setEmpty(false); setNote(''); setAiDone(doneText(p, t0)); }
     });
   }
 
@@ -105,9 +111,10 @@ export default function Today({ profile, items, onOpenTryOn, onGoWardrobe, onIte
         api.weatherGet(date).then((r) => { if (alive()) setWeather(r.weather); }).catch(() => {});
         return;
       }
-      setBusy('AI đang phối đồ cho bạn…');
+      setBusy(AI_BUSY);
+      const t0 = Date.now();
       const { plan: s } = await api.outfitSuggest(date, occasion, commute);
-      if (alive()) applyPlan(s, 0);
+      if (alive()) { applyPlan(s, 0); setAiDone(doneText(s, t0)); }
     });
   }
 
@@ -147,6 +154,33 @@ export default function Today({ profile, items, onOpenTryOn, onGoWardrobe, onIte
   }
 
   const go = (n: number) => { setIdx((i) => (i + n + list.length) % list.length); setNote(''); setSaveErr(null); };
+
+  // Swipe the outfit card like a deck: past the threshold it flies out and the next option springs forward.
+  const canSwipe = list.length > 1 && !(isToday && worn);
+  const live = useRef({ canSwipe, go, boxW });
+  live.current = { canSwipe, go, boxW };
+  const pan = useRef(new Animated.Value(0)).current;
+  const enter = useRef(new Animated.Value(1)).current;
+  const swipe = useRef(PanResponder.create({
+    onMoveShouldSetPanResponderCapture: (_, g) => live.current.canSwipe && Math.abs(g.dx) > 10 && Math.abs(g.dx) > 1.5 * Math.abs(g.dy),
+    onPanResponderTerminationRequest: () => false,
+    onPanResponderMove: (_, g) => pan.setValue(g.dx),
+    onPanResponderRelease: (_, g) => {
+      if (Math.abs(g.dx) > 80 || Math.abs(g.vx) > 0.6) {
+        const dir = g.dx < 0 ? -1 : 1;
+        Animated.timing(pan, { toValue: dir * (live.current.boxW + 80), duration: 180, useNativeDriver: true })
+          .start(() => live.current.go(dir < 0 ? 1 : -1));
+      } else {
+        Animated.spring(pan, { toValue: 0, useNativeDriver: true, bounciness: 8 }).start();
+      }
+    },
+    onPanResponderTerminate: () => Animated.spring(pan, { toValue: 0, useNativeDriver: true }).start(),
+  })).current;
+  useEffect(() => {
+    pan.setValue(0);
+    enter.setValue(0);
+    Animated.spring(enter, { toValue: 1, useNativeDriver: true, speed: 14, bounciness: 7 }).start();
+  }, [idx]); // eslint-disable-line react-hooks/exhaustive-deps
   const primaryTitle = isToday ? (confirmedHere ? 'Đã mặc hôm nay' : 'Mặc hôm nay') : (confirmedHere ? 'Đã chốt' : 'Chốt outfit');
 
   return (
@@ -175,7 +209,14 @@ export default function Today({ profile, items, onOpenTryOn, onGoWardrobe, onIte
           </Pressable>
         </View>
 
-        {busy ? <Loading text={busy} /> : err ? <ErrorBox message={err} onRetry={() => retry.current()} /> : empty ? (
+        {busy === AI_BUSY ? (
+          <ThoughtLine key={req.current} title="AI đang phối đồ" steps={[
+            `Xem dự báo thời tiết ở ${profile.city}`,
+            'Xem các bộ bạn đã mặc 7 ngày qua',
+            `Cân nhắc ${items.length} món cho dịp ${occasion} (${COMMUTE_LABEL[commute]})`,
+            `Phối 3 bộ hợp dáng cao ${profile.height_cm} cm`,
+          ]} />
+        ) : busy ? <Loading text={busy} /> : err ? <ErrorBox message={err} onRetry={() => retry.current()} /> : empty ? (
           <Card style={{ gap: 10 }}>
             <Text style={T.h2}>Tủ đồ chưa đủ để phối</Text>
             <Text style={T.sub}>Cần ít nhất 3 món, có áo và quần hoặc chân váy, hoặc một váy liền.</Text>
@@ -188,7 +229,21 @@ export default function Today({ profile, items, onOpenTryOn, onGoWardrobe, onIte
           </Card>
         ) : (
           <>
-            <View style={st.stage}>
+            {aiDone ? <ThoughtLine title="" steps={[]} done={aiDone} /> : null}
+            <View style={{ paddingBottom: canSwipe ? 14 : 0 }}>
+            {canSwipe ? (
+              <>
+                <View style={[st.peek, { left: 28, right: 28, bottom: 0, backgroundColor: C.line }]} />
+                <View style={[st.peek, { left: 14, right: 14, bottom: 7, backgroundColor: C.pink }]} />
+              </>
+            ) : null}
+            <Animated.View {...swipe.panHandlers} style={[st.stage, {
+              transform: [
+                { translateX: pan },
+                { rotate: pan.interpolate({ inputRange: [-300, 0, 300], outputRange: ['-8deg', '0deg', '8deg'] }) },
+                { scale: enter.interpolate({ inputRange: [0, 1], outputRange: [0.94, 1] }) },
+              ],
+            }]}>
               <View style={st.toggleRow}>
                 <Pressable onPress={() => setMode('body')} accessibilityRole="button" accessibilityLabel="Xem trên người" style={[st.toggle, mode === 'body' && { backgroundColor: C.pink }]}>
                   <Icon name="person" size={18} color={mode === 'body' ? C.wine : C.sub} />
@@ -209,13 +264,14 @@ export default function Today({ profile, items, onOpenTryOn, onGoWardrobe, onIte
               ) : (
                 <OutfitOnBody items={outfitItems} profile={profile} width={boxW} height={360} />
               )}
-              {list.length > 1 && !(isToday && worn) ? (
+              {canSwipe ? (
                 <>
                   <Pressable onPress={() => go(-1)} accessibilityRole="button" accessibilityLabel="Gợi ý trước" style={[st.side, { left: 4 }]}><Icon name="left" size={20} color={C.sub} /></Pressable>
                   <Pressable onPress={() => go(1)} accessibilityRole="button" accessibilityLabel="Gợi ý sau" style={[st.side, { right: 4 }]}><Icon name="right" size={20} color={C.sub} /></Pressable>
                 </>
               ) : null}
-              {list.length > 1 ? <Text style={st.counter}>{idx + 1}/{list.length}</Text> : null}
+              {list.length > 1 ? <Text style={st.counter}>{idx + 1}/{list.length}{canSwipe ? ' · vuốt để xem bộ khác' : ''}</Text> : null}
+            </Animated.View>
             </View>
 
             <Text style={T.h2}>{viewed.name}</Text>
@@ -272,6 +328,7 @@ const st = StyleSheet.create({
   ctx: { flex: 1, minHeight: 48, backgroundColor: C.card, borderRadius: R.chip, borderWidth: 1, borderColor: C.line, paddingHorizontal: 12, paddingVertical: 6, justifyContent: 'center' },
   ctxText: { fontSize: 14, fontWeight: '700', color: C.text, marginTop: 1 },
   stage: { backgroundColor: C.pinkSoft, borderRadius: R.card, overflow: 'hidden', paddingBottom: 8 },
+  peek: { position: 'absolute', height: 60, borderRadius: R.card },
   toggleRow: { flexDirection: 'row', alignItems: 'center', gap: 4, padding: 8 },
   toggle: { width: 44, height: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   tryon: { flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 44, paddingHorizontal: 12, borderRadius: 999, backgroundColor: C.card, marginLeft: 4 },

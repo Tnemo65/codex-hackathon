@@ -1,6 +1,6 @@
 // Core backend: app -> here -> OpenAI / Open-Meteo / Postgres / Storage. Secrets never leave this function.
 // The app sends { action, device_id, ... }. Contract: app/src/types.ts and app/src/api.ts.
-import OpenAI from "npm:openai";
+import OpenAI, { toFile } from "npm:openai";
 import postgres from "npm:postgres";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
@@ -60,10 +60,27 @@ create index if not exists items_device on items(device_id);
 create table if not exists plans (
   device_id text not null, date date not null, status text not null, outfit jsonb, options jsonb default '[]',
   weather jsonb, context jsonb default '{}', updated_at timestamptz default now(), primary key (device_id, date));
+create table if not exists restore_attempts (at timestamptz not null default now());
 alter table profiles enable row level security;
 alter table items enable row level security;
 alter table plans enable row level security;
+alter table restore_attempts enable row level security;
 `;
+
+// Unbiased random string from a cryptographic RNG (rejection sampling removes modulo bias).
+function randomString(len: number, alphabet: string): string {
+  const limit = 256 - (256 % alphabet.length);
+  let out = "";
+  while (out.length < len) {
+    for (const b of crypto.getRandomValues(new Uint8Array(len))) {
+      if (b < limit && out.length < len) out += alphabet[b % alphabet.length];
+    }
+  }
+  return out;
+}
+const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"; // no 0/O/1/I/L
+const RESTORE_CODE_LEN = 12; // about 59 bits; guessing is also rate limited below
+const RESTORE_MAX_PER_10_MIN = 30; // global cap on restore attempts
 let ready: Promise<void> | null = null;
 function ensureReady(): Promise<void> {
   ready ??= (async () => {
@@ -141,13 +158,22 @@ async function getWeather(city: string, date: string) {
     summary: `Sáng ${morning.t}° · ${morning.cond}`,
   };
 }
+// Forecasts change slowly: keep them for 20 minutes per warm instance, and retry once on a flaky fetch.
+const weatherCache = new Map<string, { at: number; data: Awaited<ReturnType<typeof getWeather>> }>();
 async function weatherOrNull(city: string, date: string) {
-  try {
-    return await getWeather(city, date);
-  } catch (e) {
-    console.error("weather", String(e));
-    return null;
+  const key = `${city}|${date}`;
+  const hit = weatherCache.get(key);
+  if (hit && Date.now() - hit.at < 20 * 60 * 1000) return hit.data;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const data = await getWeather(city, date);
+      weatherCache.set(key, { at: Date.now(), data });
+      return data;
+    } catch (e) {
+      console.error("weather", { attempt, error: String(e) });
+    }
   }
+  return null;
 }
 
 // ---------- AI: read one garment photo ----------
@@ -203,6 +229,38 @@ async function removeBackground(bytes: Uint8Array): Promise<Uint8Array | null> {
     return null;
   }
   return new Uint8Array(await res.arrayBuffer());
+}
+
+// Fallback when no remove.bg key is configured: ask the OpenAI image model for a transparent cut-out.
+// It takes tens of seconds, so it runs after the response and fills items.cutout_path when done.
+declare const EdgeRuntime: { waitUntil(p: Promise<unknown>): void };
+const CUTOUT_MODEL = Deno.env.get("CUTOUT_MODEL") ?? "gpt-image-2.6-flare";
+async function cutoutWithAI(id: string, device: string, bytes: Uint8Array): Promise<void> {
+  const t0 = Date.now();
+  try {
+    // deno-lint-ignore no-explicit-any
+    const params: any = {
+      model: CUTOUT_MODEL,
+      image: await toFile(bytes, "item.jpg", { type: "image/jpeg" }),
+      prompt: "Remove the background completely. Keep the garment exactly as it is: same shape, colour, pattern, texture and details. " +
+        "Show only the garment, centred, fully visible, on a fully transparent background. No person, hanger, mannequin, text or shadow.",
+      background: "transparent",
+      output_format: "png",
+      quality: "low",
+      size: "1024x1024",
+    };
+    if (CUTOUT_MODEL.startsWith("gpt-image-2.6")) params.complexity = "low";
+    const res = await openai().images.edit(params);
+    const b64 = res.data?.[0]?.b64_json;
+    if (!b64) throw new Error("no image returned");
+    const path = `items/${device}/${id}.png`;
+    const up = await storage().from(BUCKET).upload(path, decodeB64(b64), { contentType: "image/png", upsert: true });
+    if (up.error) throw new Error(up.error.message);
+    await sql`update items set cutout_path = ${path} where id = ${id} and device_id = ${device}`;
+    console.log("cutout.ai", { ms: Date.now() - t0, model: CUTOUT_MODEL });
+  } catch (e) {
+    console.error("cutout.ai failed", { ms: Date.now() - t0, error: String(e).slice(0, 300) });
+  }
 }
 
 function decodeB64(b64: string): Uint8Array {
@@ -298,14 +356,19 @@ async function route(action: string, device: string, body: any): Promise<unknown
       if (!p || typeof p !== "object" || !(p.height_cm >= 120 && p.height_cm <= 210) || !(p.weight_kg >= 30 && p.weight_kg <= 150))
         throw new HttpError(400, "Hồ sơ chưa hợp lệ, kiểm tra lại chiều cao và cân nặng.");
       if (JSON.stringify(p).length > 4000) throw new HttpError(400, "Hồ sơ quá dài.");
-      const alphabet = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
-      const code = Array.from(crypto.getRandomValues(new Uint8Array(6)), (b) => alphabet[b % alphabet.length]).join("");
+      const code = randomString(RESTORE_CODE_LEN, CODE_ALPHABET);
       const [r] = await sql`insert into profiles (device_id, restore_code, data) values (${device}, ${code}, ${sql.json(p)})
         on conflict (device_id) do update set data = excluded.data, updated_at = now() returning data, restore_code`;
       return { profile: r.data, restore_code: r.restore_code };
     }
     case "profile.restore": {
-      const code = clip(body.restore_code, 12).toUpperCase().trim();
+      // A restore code works like a password for the wardrobe, so cap guessing globally.
+      await sql`insert into restore_attempts default values`;
+      const [{ n }] = await sql`select count(*)::int as n from restore_attempts where at > now() - interval '10 minutes'`;
+      if (n > RESTORE_MAX_PER_10_MIN) throw new HttpError(429, "Có quá nhiều lần thử, đợi ít phút rồi nhập lại nhé.");
+      if (n === 1) await sql`delete from restore_attempts where at < now() - interval '1 day'`;
+      const code = clip(body.restore_code, 24).toUpperCase().replace(/[^A-Z0-9]/g, "");
+      if (code.length !== RESTORE_CODE_LEN) throw new HttpError(404, "Mã khôi phục không đúng.");
       const [r] = await sql`select device_id from profiles where restore_code = ${code}`;
       if (!r) throw new HttpError(404, "Mã khôi phục không đúng.");
       return { device_id: r.device_id };
@@ -339,6 +402,8 @@ async function route(action: string, device: string, body: any): Promise<unknown
         values (${id}, ${device}, ${clip(ai.name, 80)}, ${ai.kind}, ${clip(ai.category, 60)}, ${clip(ai.color_name, 40)}, ${clip(ai.color_hex, 9)}, ${clip(ai.material, 40)},
           ${clip(ai.pattern, 40)}, ${sql.json(ai.occasions ?? [])}, ${ai.length ?? ""}, ${ai.rise ?? ""}, ${ai.fit ?? "vua"}, ${imagePath}, ${cutoutPath})
         returning ${ITEM_COLS}`;
+      // No remove.bg result: let the AI cut-out run in the background; the app sees it on the next items.list.
+      if (body.remove_bg === true && !cutoutPath) EdgeRuntime.waitUntil(cutoutWithAI(id, device, bytes));
       console.log("item.add", { ms: Date.now() - t0, model: VISION_MODEL, cutout: !!cutoutPath });
       return { item: (await toItems([row as Row]))[0] };
     }
@@ -472,12 +537,16 @@ Deno.serve(async (req) => {
     if (raw.length > MAX_IMAGE_B64 + 20_000) return json({ error: "Dữ liệu gửi lên quá lớn." }, 413);
     const body = JSON.parse(raw);
     action = String(body.action ?? "");
+    // The server mints device ids (128 random bits): the id is the only credential an install has.
+    if (action === "device.new") return json({ device_id: "d_" + randomString(32, "0123456789abcdef") });
     const device = String(body.device_id ?? "");
     if (!/^[a-z0-9_]{8,64}$/.test(device)) return json({ error: "Thiếu mã thiết bị." }, 400);
     await ensureReady();
     const out = await route(action, device, body);
-    console.log("ok", { action, ms: Date.now() - started });
-    return json(out);
+    const ms = Date.now() - started;
+    console.log("ok", { action, ms });
+    // server_ms lets us tell model time from network time when measuring on a slow connection
+    return json({ ...(out as Record<string, unknown>), server_ms: ms });
   } catch (err) {
     const known = err instanceof HttpError;
     console.error("failed", { action, ms: Date.now() - started, error: String(err) });

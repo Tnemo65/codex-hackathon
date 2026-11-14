@@ -49,7 +49,7 @@ export default function App() {
     setBooting(true);
     setBootError(null);
     try {
-      setRemoveBg((await AsyncStorage.getItem(REMOVE_BG_KEY)) === '1');
+      setRemoveBg((await AsyncStorage.getItem(REMOVE_BG_KEY)) !== '0'); // background removal is on unless switched off
       const { profile: p, restore_code } = await api.profileGet();
       setProfile(p);
       setRestoreCode(restore_code);

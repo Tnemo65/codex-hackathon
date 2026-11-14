@@ -100,7 +100,7 @@ export function OutfitOnBody({ items, profile, width, height }: { items: Item[];
       {/* Natural waist marker, drawn above the clothes so the proportion difference stays visible */}
       <Svg width={areaW} height={height} style={{ position: 'absolute', left: 0, top: 0 }} pointerEvents="none">
         <Line x1={f.cx - lineHalf} y1={waistY} x2={f.cx + lineHalf} y2={waistY} stroke={C.wine} strokeOpacity={0.55} strokeWidth={1} strokeDasharray="4 3" />
-        <SvgText x={f.cx + lineHalf} y={waistY - 3} fontSize={9} fill={C.wine} fillOpacity={0.7} textAnchor="end">eo</SvgText>
+        <SvgText x={f.cx + lineHalf} y={waistY - 3} fontSize={11} fill={C.wine} fillOpacity={0.8} textAnchor="end">eo</SvgText>
       </Svg>
 
       {thumbs.map((it, i) => (
@@ -108,12 +108,12 @@ export function OutfitOnBody({ items, profile, width, height }: { items: Item[];
           <View style={it.cutout_url ? null : { borderRadius: 8, overflow: 'hidden', backgroundColor: C.card }}>
             <Image source={{ uri: it.cutout_url ?? it.image_url }} style={{ width: colW - 8, height: Math.max(8, cellH - labelH - 6) }} resizeMode="contain" />
           </View>
-          <Text numberOfLines={1} style={{ fontSize: 9, color: C.text, marginTop: 2, maxWidth: colW, textAlign: 'center' }}>{it.name}</Text>
+          <Text numberOfLines={1} style={{ fontSize: 11, color: C.text, marginTop: 2, maxWidth: colW, textAlign: 'center' }}>{it.name}</Text>
         </View>
       ))}
 
       {profile ? (
-        <Text numberOfLines={1} style={{ position: 'absolute', left: 12, bottom: 6, maxWidth: areaW - 12, fontSize: 10, color: C.sub }}>
+        <Text numberOfLines={1} style={{ position: 'absolute', left: 12, bottom: 6, maxWidth: areaW - 12, fontSize: 11, color: C.sub }}>
           {`${Math.round(profile.height_cm)} cm · ${PROPORTION_LABEL[profile.proportion] ?? ''}`}
         </Text>
       ) : null}

@@ -4,8 +4,11 @@ import { ActivityIndicator, Modal, Platform, Pressable, ScrollView, StatusBar, S
 import Svg, { Circle, Path } from 'react-native-svg';
 import { C, R, S, T } from './theme';
 
-export const TOP_INSET = Platform.OS === 'ios' ? 54 : (StatusBar.currentHeight ?? 0) + 12;
-export const BOTTOM_INSET = Platform.OS === 'ios' ? 24 : 8;
+// Fixed insets (no safe-area module is installed): clear the Dynamic Island / notch and the home indicator on iPhone.
+export const TOP_INSET = Platform.OS === 'ios' ? 60 : (StatusBar.currentHeight ?? 0) + 12;
+export const BOTTOM_INSET = Platform.OS === 'ios' ? 28 : 8;
+// Shared pressed-state feedback: dim without changing layout bounds.
+export const pressedStyle = ({ pressed }: { pressed: boolean }) => (pressed ? { opacity: 0.6 } : null);
 
 type IconName = 'home' | 'hanger' | 'layers' | 'user' | 'chat' | 'plus' | 'left' | 'right' | 'warn' | 'spark' | 'check' | 'camera' | 'image' | 'close' | 'grid' | 'person' | 'send' | 'trash';
 
@@ -50,7 +53,7 @@ export function Button({ title, onPress, kind = 'primary', disabled, loading, ic
       disabled={disabled || loading}
       accessibilityRole="button"
       accessibilityLabel={title}
-      style={[st.button, { backgroundColor: bg, borderColor: kind === 'outline' ? C.line : bg, opacity: disabled ? 0.5 : 1 }, style]}
+      style={({ pressed }) => [st.button, { backgroundColor: bg, borderColor: kind === 'outline' ? C.line : bg, opacity: disabled ? 0.5 : pressed ? 0.75 : 1 }, style]}
     >
       {loading ? <ActivityIndicator color={fg} /> : (
         <>
@@ -65,7 +68,7 @@ export function Button({ title, onPress, kind = 'primary', disabled, loading, ic
 export function Chip({ label, selected, onPress }: { label: string; selected?: boolean; onPress?: () => void }) {
   return (
     <Pressable onPress={onPress} accessibilityRole="button" accessibilityState={{ selected: !!selected }}
-      style={[st.chip, { backgroundColor: selected ? C.pink : C.card, borderColor: selected ? C.pink : C.line }]}>
+      style={({ pressed }) => [st.chip, { backgroundColor: selected ? C.pink : C.card, borderColor: selected ? C.pink : C.line, opacity: pressed ? 0.6 : 1 }]}>
       <Text style={{ fontSize: 14, fontWeight: selected ? '700' : '500', color: selected ? C.wine : C.text }}>{label}</Text>
     </Pressable>
   );

@@ -33,7 +33,7 @@ export function OutfitCanvas({ items, width, height, onPressItem }: { items: Ite
           <View style={it.cutout_url ? null : { borderRadius: 12, overflow: 'hidden', backgroundColor: C.card }}>
             <Image source={{ uri: it.cutout_url ?? it.image_url }} style={{ width: cellW * 0.9, height: imgH }} resizeMode="contain" />
           </View>
-          <Text numberOfLines={1} style={{ fontSize: 10, color: C.text, marginTop: 4, maxWidth: cellW, textAlign: 'center' }}>{it.name}</Text>
+          <Text numberOfLines={1} style={{ fontSize: 11, color: C.text, marginTop: 4, maxWidth: cellW, textAlign: 'center' }}>{it.name}</Text>
         </Pressable>
       ))}
     </View>

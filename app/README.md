@@ -45,12 +45,12 @@ Mở trên iPhone: Expo Go (đăng nhập tài khoản `dacthinh`) → mở `exp
 Bản cài đặt Android (cho demo chấm điểm, mở lại không cần laptop):
 
 ```bash
-EAS_NO_VCS=1 npx eas-cli build --platform android --profile preview
+EAS_NO_VCS=1 EAS_PROJECT_ROOT="$PWD" npx eas-cli build --platform android --profile preview
 ```
 
-`EAS_NO_VCS=1` là bắt buộc: `.gitignore` ở thư mục gốc repo whitelist `/app/` khiến EAS đóng gói thiếu `package.json`.
+`EAS_NO_VCS=1` và `EAS_PROJECT_ROOT` (chạy trong thư mục `app/`) là bắt buộc: `.gitignore` ở thư mục gốc repo whitelist `/app/` khiến EAS đóng gói thiếu `package.json`.
 
-Bản APK nhận cập nhật JS qua `npm run ship` (cùng channel `preview`, runtime `exposdk:58.0.0`); đóng hẳn rồi mở lại app để tải bản mới.
+**Thêm/xoá thư viện native (vd. `expo-image-picker`) ⇒ phải build lại APK trước khi `npm run ship`**, vì runtime vẫn là `exposdk:58.0.0` nên APK cũ sẽ nhận JS mới và crash. Bản APK nhận cập nhật JS qua `npm run ship` (cùng channel `preview`, runtime `exposdk:58.0.0`); đóng hẳn rồi mở lại app để tải bản mới.
 
 Bản web cho người dùng thử (trình duyệt, không tính cho phần demo trên điện thoại): https://tudo-ai.expo.app
 
@@ -63,6 +63,9 @@ Log backend: Supabase Dashboard → Edge Functions → `suggest-outfit` → Logs
 ## Giả lập (mock)
 
 - Tủ đồ và thời tiết đang hardcode trong `App.tsx` (đánh dấu `ponytail:`). Lời gọi AI là thật.
+- Các bước "AI đang phối đồ" / "AI đang đọc ảnh" (`src/components/ThoughtLine.tsx`) hiện theo hẹn giờ vì server chỉ trả kết quả một lần; nội dung bước là đúng dữ liệu AI nhận, đồng hồ và số bộ là đo thật.
+- Các giai đoạn khi chờ ảnh mặc thử (`RefineFrame` trong `src/screens/TryOn.tsx`) chạy theo thời gian đã chờ; ảnh thật chỉ có ở bước cuối.
+
 ## Làm trước vs. làm trong ngày
 
 - Trước 14/11: ý tưởng, đặc tả, prototype HTML (`../idea/`).

@@ -10,11 +10,15 @@ const FALLBACK_MODEL = "gpt-image-2.6-flare";
 const QUALITY = Deno.env.get("TRYON_QUALITY") ?? "low";
 const BUCKET = "wardrobe";
 const SIGN_SECONDS = 60 * 60 * 24 * 7;
-const MAX_IMAGE_B64 = 2_000_000; // about 1.5 MB of JPEG
+const MAX_IMAGE_B64 = 1_500_000; // 1.5 MB of base64 (about 1.1 MB of JPEG)
 const MAX_GARMENTS = 5;
 // Free plan wall clock is 150 s (paid 400 s); keep the OpenAI call under it so the job can record a failure.
 const OPENAI_TIMEOUT_MS = 135_000;
 const STALE_MS = 170_000;
+const MAX_JOBS_PER_DEVICE = 6; // per 24 hours
+const MAX_JOBS_GLOBAL = 60; // per 24 hours
+const MAX_BODY_CHARS = (MAX_GARMENTS + 1) * MAX_IMAGE_B64 + 20_000;
+const DEVICE_RE = /^[a-z0-9_]{8,64}$/; // same rule as the `api` function
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -74,6 +78,8 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 function cleanB64(s: unknown): string {
   if (typeof s !== "string" || !s) throw new HttpError(400, "Ảnh không hợp lệ.");
+  // Check the raw length first so a huge string is never processed further.
+  if (s.length > MAX_IMAGE_B64 + 100) throw new HttpError(413, "Ảnh quá lớn, chọn ảnh nhỏ hơn nhé.");
   const b64 = s.replace(/^data:[^,]*,/, "").replace(/\s/g, "");
   if (b64.length > MAX_IMAGE_B64) throw new HttpError(413, "Ảnh quá lớn, chọn ảnh nhỏ hơn nhé.");
   return b64;
@@ -123,8 +129,6 @@ async function generate(model: string, images: File[]): Promise<string> {
     size: "1024x1536",
     quality: QUALITY,
     output_format: "jpeg",
-    output_compression: 80,
-    n: 1,
   };
   if (model.startsWith("gpt-image-2.6")) params.complexity = "low";
   const res = await openai.images.edit(params);
@@ -187,7 +191,29 @@ async function loadGarments(device: string, ids: string[]): Promise<File[]> {
   return files;
 }
 
+// Image generation costs money: only devices with a saved profile, and per-device / global daily caps.
+async function checkAllowed(device: string) {
+  if (!DEVICE_RE.test(device)) throw new HttpError(400, "Mã thiết bị không hợp lệ.");
+  if (device !== Deno.env.get("TRYON_TEST_DEVICE")) {
+    let hasProfile = false;
+    try {
+      const rows = await sql`select 1 from profiles where device_id = ${device} limit 1`;
+      hasProfile = rows.length > 0;
+    } catch (e) {
+      console.error("profiles read", String(e)); // table not created yet -> no profile
+    }
+    if (!hasProfile) throw new HttpError(403, "Hãy hoàn tất hồ sơ trước khi dùng Mặc thử AI.");
+  }
+  const [q] = await sql`select
+      count(*) filter (where device_id = ${device})::int as mine,
+      count(*)::int as total
+    from tryon_jobs where created_at > now() - interval '24 hours'`;
+  if (q.mine >= MAX_JOBS_PER_DEVICE) throw new HttpError(429, "Hôm nay bạn đã tạo đủ 6 ảnh phối. Mai thử tiếp nhé.");
+  if (q.total >= MAX_JOBS_GLOBAL) throw new HttpError(429, "Mặc thử AI đang quá tải hôm nay. Thử lại sau nhé.");
+}
+
 async function create(device: string, body: Record<string, unknown>) {
+  await checkAllowed(device);
   const itemIds = Array.isArray(body.item_ids) ? (body.item_ids as unknown[]).map(String).slice(0, 10) : [];
   const extras = Array.isArray(body.item_images_base64) ? (body.item_images_base64 as unknown[]) : [];
   if (itemIds.length + extras.length > MAX_GARMENTS) throw new HttpError(400, "Chọn tối đa 5 món để phối.");
@@ -250,9 +276,18 @@ Deno.serve(async (req) => {
   if (!allowedKeys().includes(req.headers.get("apikey") ?? "")) return json({ error: "unauthorized" }, 401);
 
   try {
-    const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
-    const device = typeof body.device_id === "string" ? body.device_id.trim().slice(0, 64) : "";
-    if (!device || !/^[A-Za-z0-9_-]+$/.test(device)) throw new HttpError(400, "Thiếu mã thiết bị.");
+    // Cap the size before parsing so an oversized request is rejected cheaply.
+    const raw = await req.text();
+    if (raw.length > MAX_BODY_CHARS) throw new HttpError(413, "Ảnh quá lớn, chọn ảnh nhỏ hơn nhé.");
+    let body: Record<string, unknown>;
+    try {
+      body = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      throw new HttpError(400, "Yêu cầu không hợp lệ.");
+    }
+    if (!body || typeof body !== "object") throw new HttpError(400, "Yêu cầu không hợp lệ.");
+    const device = typeof body.device_id === "string" ? body.device_id : "";
+    if (!DEVICE_RE.test(device)) throw new HttpError(400, "Thiếu mã thiết bị.");
     await ensureReady();
     if (body.action === "tryon.create") return json(await create(device, body));
     if (body.action === "tryon.status") return json(await status(device, body));

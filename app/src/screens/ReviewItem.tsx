@@ -17,7 +17,7 @@ function Row({ label, ai, children }: { label: string; ai: boolean; children: Re
     <Card style={{ gap: 8, padding: 14 }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
         <Text style={{ fontSize: 13, fontWeight: '600', color: C.sub }}>{label}</Text>
-        {ai ? <View style={{ paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999, backgroundColor: C.pink }}><Text style={{ fontSize: 10, fontWeight: '700', color: C.wine }}>AI</Text></View> : null}
+        {ai ? <View style={{ paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999, backgroundColor: C.pink }}><Text style={{ fontSize: 11, fontWeight: '700', color: C.wine }}>AI</Text></View> : null}
       </View>
       {children}
     </Card>
