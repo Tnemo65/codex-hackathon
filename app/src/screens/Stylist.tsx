@@ -11,8 +11,8 @@ type Msg =
   | { id: number; kind: 'outfit'; name: string; ids: string[] }
   | { id: number; kind: 'error'; text: string; retryText: string };
 
-const QUICK = ['Đổi giày', 'Ấm hơn', 'Thanh lịch hơn', 'Đổi cả bộ'];
-const GREETING: Msg = { id: 1, kind: 'stylist', text: 'Chào bạn! Mình là Stylist. Bạn muốn chỉnh gì ở outfit hôm nay?' };
+const QUICK = ['Mai đi phỏng vấn', 'Trời mưa đi làm', 'Hẹn cà phê cuối tuần', 'Đi đám cưới', 'Đổi giày', 'Ấm hơn', 'Đổi cả bộ'];
+const GREETING: Msg = { id: 1, kind: 'stylist', text: 'Chào bạn, hôm nay cần phối gì? Mình sẽ tư vấn từ đồ bạn đang có.' };
 
 // Chat history survives tab switches.
 let history: Msg[] = [GREETING];
@@ -78,7 +78,7 @@ export default function Stylist({ items, profile, onOpenTryOn, onPlanChanged, on
 
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <Screen title="Stylist" subtitle="Outfit hôm nay" right={avatar} scroll={false}>
+      <Screen title="Stylist" subtitle="Tư vấn từ đồ bạn đang có" right={avatar} scroll={false}>
         <View style={st.outfitCard}>
           {!loaded ? <ActivityIndicator color={C.wine} /> : outfit ? (
             <>
@@ -130,7 +130,7 @@ export default function Stylist({ items, profile, onOpenTryOn, onPlanChanged, on
           <View style={st.input}>
             <Icon name="chat" size={18} color={C.sub} />
             <TextInput
-              value={text} onChangeText={setText} maxLength={300} placeholder="Nhắn Stylist…" placeholderTextColor={C.sub}
+              value={text} onChangeText={setText} maxLength={300} placeholder="Hỏi Stylist…" placeholderTextColor={C.sub}
               returnKeyType="send" onSubmitEditing={() => void send(text)} editable={!busy} accessibilityLabel="Nhắn Stylist"
               style={{ flex: 1, fontSize: 15, color: C.text, paddingVertical: 10 }}
             />

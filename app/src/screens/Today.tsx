@@ -292,11 +292,11 @@ export default function Today({ profile, items, onOpenTryOn, onGoWardrobe, onIte
                 ) : null}
               </View>
               {outfitItems.length === 0 ? (
-                <View style={{ height: 360, alignItems: 'center', justifyContent: 'center' }}><Text style={T.sub}>Không thấy các món này trong tủ đồ.</Text></View>
+                <View style={{ height: 494, alignItems: 'center', justifyContent: 'center' }}><Text style={T.sub}>Không thấy các món này trong tủ đồ.</Text></View>
               ) : mode === 'canvas' ? (
-                <OutfitCanvas items={outfitItems} width={boxW} height={360} />
+                <OutfitCanvas items={outfitItems} width={boxW} height={494} />
               ) : (
-                <OutfitPhoto items={outfitItems} profile={profile} width={boxW} height={440} />
+                <OutfitPhoto items={outfitItems} profile={profile} width={boxW} height={494} />
               )}
               {canSwipe ? (
                 <>
@@ -304,7 +304,7 @@ export default function Today({ profile, items, onOpenTryOn, onGoWardrobe, onIte
                   <Pressable onPress={() => go(1)} accessibilityRole="button" accessibilityLabel="Gợi ý sau" style={[st.side, { right: 4 }]}><Icon name="right" size={20} color={C.sub} /></Pressable>
                 </>
               ) : null}
-              {list.length > 1 ? <Text style={st.counter}>{idx + 1}/{list.length}{canSwipe ? ' · vuốt để xem bộ khác' : ''}</Text> : null}
+              {list.length > 1 ? <Text style={st.counter}>{idx + 1} / {list.length}</Text> : null}
             </Animated.View>
             </View>
 
@@ -369,7 +369,7 @@ const st = StyleSheet.create({
   toggleRow: { flexDirection: 'row', alignItems: 'center', gap: 4, padding: 8 },
   toggle: { width: 44, height: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   tryon: { flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 44, paddingHorizontal: 12, borderRadius: 999, backgroundColor: C.card, marginLeft: 4 },
-  side: { position: 'absolute', top: 190, width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(255,255,255,0.85)', alignItems: 'center', justifyContent: 'center' },
+  side: { position: 'absolute', top: 255, width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(255,255,255,0.85)', alignItems: 'center', justifyContent: 'center' },
   counter: { alignSelf: 'center', fontSize: 12, fontWeight: '600', color: C.sub, marginTop: 4 },
   fit: { backgroundColor: C.pink, borderRadius: 16, padding: 14 },
   textBtn: { alignSelf: 'center', minHeight: 44, paddingHorizontal: 16, justifyContent: 'center' },

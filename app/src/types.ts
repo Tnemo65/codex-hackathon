@@ -55,6 +55,9 @@ export interface ProductPick { id: string; why: string }
 // What pairs with one shop product: owned item ids and other shop product ids, each with a short reason.
 export interface ProductMatch { own: ProductPick[]; shop: ProductPick[] }
 
+// One piece the AI found in a photo (a full-body photo can hold several); confidence is 0-100.
+export type Detection = Pick<Item, 'name' | 'kind' | 'category' | 'color_name' | 'color_hex' | 'material' | 'pattern' | 'occasions' | 'length' | 'rise' | 'fit'> & { confidence: number };
+
 export interface WeatherPart {
   t: number; // °C
   cond: string; // "Nắng nhẹ", "Mưa rào", ...

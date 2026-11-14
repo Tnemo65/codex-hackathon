@@ -16,7 +16,7 @@ function Row({ label, ai, children }: { label: string; ai: boolean; children: Re
   return (
     <Card style={{ gap: 8, padding: 14 }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-        <Text style={{ fontSize: 13, fontWeight: '600', color: C.sub }}>{label}</Text>
+        <Text style={{ fontSize: 13, fontWeight: '500', color: C.sub }}>{label}</Text>
         {ai ? <View style={{ paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999, backgroundColor: C.pink }}><Text style={{ fontSize: 11, fontWeight: '700', color: C.wine }}>AI</Text></View> : null}
       </View>
       {children}
@@ -80,7 +80,7 @@ export default function ReviewItem({ item, isNew, cutout, cutting, onSave, onDel
     >
       <View style={{ backgroundColor: C.pinkSoft, borderRadius: R.card, padding: 12, gap: 8 }}>
         {cutUrl ? <Badge text="Đã tách nền" tone="ok" /> : cutting ? <Text style={T.small}>AI đang tách nền, khoảng 15 giây…</Text> : null}
-        <Image source={{ uri: cutUrl ?? item.image_url }} resizeMode="contain" style={{ width: '100%', height: 260 }} />
+        <Image source={{ uri: cutUrl ?? item.image_url }} resizeMode="contain" style={{ width: '100%', height: 210 }} />
       </View>
       <Row label="Tên món" ai={isNew}>{text('name')}</Row>
       <Row label="Loại" ai={isNew}>

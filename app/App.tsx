@@ -169,13 +169,13 @@ export default function App() {
       <View style={{ flex: 1, width: '100%', maxWidth: 520, alignSelf: 'center' }}>
         <View style={{ flex: 1 }}>{body}</View>
         {showTabs ? (
-          <View style={{ flexDirection: 'row', backgroundColor: C.card, borderTopWidth: 1, borderTopColor: C.line, paddingTop: 6, paddingBottom: 6 + BOTTOM_INSET }}>
+          <View style={{ flexDirection: 'row', backgroundColor: C.card, borderTopWidth: 1, borderTopColor: C.line, paddingTop: 12, paddingBottom: 15 + BOTTOM_INSET }}>
             {TABS.map((t) => {
               const active = tab === t.id;
               return (
                 <Pressable key={t.id} onPress={() => { if (t.id === 'tryon') setTryOnIds([]); setTab(t.id); }} accessibilityRole="tab" accessibilityState={{ selected: active }} accessibilityLabel={t.label}
-                  style={{ flex: 1, alignItems: 'center', gap: 2, minHeight: 48, justifyContent: 'center' }}>
-                  <View style={{ paddingHorizontal: 14, paddingVertical: 4, borderRadius: 12, backgroundColor: active ? C.pink : 'transparent' }}>
+                  style={{ flex: 1, alignItems: 'center', gap: 6, minHeight: 48 }}>
+                  <View style={{ width: 50, height: 29, alignItems: 'center', justifyContent: 'center', borderRadius: 15, backgroundColor: active ? C.pink : 'transparent' }}>
                     <Icon name={t.icon} size={20} color={active ? C.wine : C.sub} />
                   </View>
                   <Text style={{ fontSize: 11, fontWeight: active ? '700' : '500', color: active ? C.wine : C.sub }}>{t.label}</Text>

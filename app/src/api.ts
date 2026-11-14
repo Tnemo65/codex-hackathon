@@ -1,6 +1,6 @@
 // Client for the `api` Edge Function. The app never talks to the database directly.
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import type { Commute, Item, Outfit, Plan, PlanStatus, Product, ProductMatch, ProductPick, Profile, ShopSuggestion, Weather } from './types';
+import type { Commute, Detection, Item, Outfit, Plan, PlanStatus, Product, ProductMatch, ProductPick, Profile, ShopSuggestion, Weather } from './types';
 
 const API_URL = `${process.env.EXPO_PUBLIC_SUPABASE_URL}/functions/v1/api`;
 const TRYON_URL = `${process.env.EXPO_PUBLIC_SUPABASE_URL}/functions/v1/tryon`;
@@ -174,6 +174,10 @@ export const api = {
   // image_base64: JPEG, no "data:" prefix, already resized (see photo.ts). AI fills the attributes.
   // remove_bg: also ask the server for a background-free cutout (limited quota, off by default).
   itemAdd: (image_base64: string, remove_bg = false) => call<{ item: Item }>('item.add', { image_base64, remove_bg }, 90000),
+  // Multi-piece photos: list every piece, then save the kept ones (each gets its own AI cut-out in the background).
+  itemsDetect: (image_base64: string) => call<{ detections: Detection[] }>('items.detect', { image_base64 }, 90000),
+  itemsAddMany: (image_base64: string, detections: Detection[], remove_bg = false) =>
+    call<{ items: Item[] }>('items.add_many', { image_base64, detections, remove_bg }, 90000),
   itemUpdate: (id: string, patch: Partial<Item>) => call<{ item: Item }>('item.update', { id, patch }),
   itemDelete: (id: string) => call<{ ok: true }>('item.delete', { id }),
 

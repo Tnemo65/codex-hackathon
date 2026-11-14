@@ -6,8 +6,8 @@ import { ShopCatalog } from '../components/ShopCatalog';
 import { ThoughtLine } from '../components/ThoughtLine';
 import { pickPhoto, takePhoto, type Photo } from '../photo';
 import { C, R, S, T } from '../theme';
-import { type Item, type Kind } from '../types';
-import { Button, Card, ErrorBox, Icon, Loading, Screen, Sheet } from '../ui';
+import { type Detection, type Item, type Kind } from '../types';
+import { Banner, Button, Card, ErrorBox, Icon, Loading, Screen, Sheet } from '../ui';
 import ReviewItem from './ReviewItem';
 
 type Filter = 'all' | 'top' | 'bottom' | 'acc';
@@ -18,6 +18,7 @@ const FILTERS: { key: Filter; label: string; kinds: Kind[] }[] = [
   { key: 'acc', label: 'Phụ kiện', kinds: ['shoes', 'bag'] },
 ];
 const GRID_GAP = 10;
+const KIND_LABEL: Record<Kind, string> = { top: 'Áo', bottom: 'Quần / váy', dress: 'Váy liền', outer: 'Áo khoác', shoes: 'Giày', bag: 'Túi' };
 
 // Tile fades and slides up once, staggered by `delay`.
 function Rise({ delay, children }: { delay: number; children: React.ReactNode }) {
@@ -38,7 +39,10 @@ export default function Wardrobe({ items, loading, removeBg, onReload, autoAdd, 
   const [query, setQuery] = useState('');
   const { width } = useWindowDimensions();
   const [sheet, setSheet] = useState(false);
-  const [busy, setBusy] = useState<string | null>(null); // uri of the photo AI is reading
+  const [busy, setBusy] = useState<{ uri: string; mode: 'detect' | 'split' } | null>(null); // photo AI is reading
+  const [scan, setScan] = useState<{ photo: Photo; detections: Detection[]; picked: boolean[] } | null>(null); // 2+ pieces waiting for confirm
+  const [added, setAdded] = useState<string | null>(null);
+  const [multiWait, setMultiWait] = useState<string[]>([]); // ids of items added from one photo still waiting for their cut-out
   const [error, setError] = useState<string | null>(null);
   const [review, setReview] = useState<{ item: Item; isNew: boolean } | null>(null);
   const [cut, setCut] = useState<{ id: string; url: string | null } | null>(null); // new item and its cut-out once ready
@@ -60,13 +64,40 @@ export default function Wardrobe({ items, loading, removeBg, onReload, autoAdd, 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [waitingId]);
 
+  const multiKey = multiWait.join(',');
+  useEffect(() => {
+    if (!multiKey) return;
+    let tries = 0;
+    let live = true;
+    const iv = setInterval(async () => {
+      tries += 1;
+      const list = await api.itemsList().then((r) => r.items).catch(() => null);
+      if (!live) return;
+      if (list) {
+        const left = multiKey.split(',').filter((id) => !list.find((i) => i.id === id)?.cutout_url);
+        if (left.length < multiKey.split(',').length) onReload().catch(() => {});
+        if (left.length === 0) { setMultiWait([]); return; }
+        if (tries < 15) { if (left.join(',') !== multiKey) setMultiWait(left); return; }
+      } else if (tries < 15) return;
+      setMultiWait([]);
+    }, 4000);
+    return () => { live = false; clearInterval(iv); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [multiKey]);
+
   const add = async (picker: () => Promise<Photo | null>) => {
     setSheet(false);
     setError(null);
     try {
       const photo = await picker();
       if (!photo) return;
-      setBusy(photo.uri);
+      setAdded(null);
+      setBusy({ uri: photo.uri, mode: 'detect' });
+      const { detections } = await api.itemsDetect(photo.base64);
+      if (detections.length > 1) {
+        setScan({ photo, detections, picked: detections.map(() => true) });
+        return;
+      }
       const { item } = await api.itemAdd(photo.base64, removeBg);
       await onReload().catch(() => {});
       setReview({ item, isNew: true });
@@ -88,6 +119,24 @@ export default function Wardrobe({ items, loading, removeBg, onReload, autoAdd, 
 
   const back = () => setReview(null);
 
+  const addPicked = async () => {
+    if (!scan) return;
+    const { photo, detections, picked } = scan;
+    setError(null);
+    setBusy({ uri: photo.uri, mode: 'split' });
+    try {
+      const { items: created } = await api.itemsAddMany(photo.base64, detections.filter((_, i) => picked[i]), removeBg);
+      await onReload().catch(() => {});
+      setScan(null);
+      setAdded(`Đã thêm ${created.length} món${removeBg ? ' · ảnh tách nền sẽ hiện sau ít giây' : ''}`);
+      if (removeBg) setMultiWait(created.filter((i) => !i.cutout_url).map((i) => i.id));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Có lỗi xảy ra.');
+    } finally {
+      setBusy(null);
+    }
+  };
+
   if (review) {
     const { item, isNew } = review;
     return (
@@ -105,17 +154,57 @@ export default function Wardrobe({ items, loading, removeBg, onReload, autoAdd, 
 
   if (busy) {
     // Show the photo being read instead of a blank blocking spinner.
+    const split = busy.mode === 'split';
     return (
-      <Screen title="Thêm món đồ" subtitle="AI đang đọc ảnh và điền thông tin" scroll={false}>
+      <Screen title="Thêm món đồ" subtitle={split ? 'AI đang tách từng món từ ảnh' : 'AI đang nhận diện món đồ trong ảnh'} scroll={false}>
         <View style={{ flex: 1, backgroundColor: C.pinkSoft, borderRadius: R.card, overflow: 'hidden' }}>
-          <Image source={{ uri: busy }} resizeMode="contain" style={{ flex: 1 }} accessibilityLabel="Ảnh món đồ vừa chọn" />
+          <Image source={{ uri: busy.uri }} resizeMode="contain" style={{ flex: 1 }} accessibilityLabel="Ảnh món đồ vừa chọn" />
         </View>
-        <ThoughtLine title="AI đang đọc ảnh" steps={[
-          'Nhận diện món đồ trong ảnh',
-          'Đọc loại đồ, màu, chất liệu, họa tiết',
-          'Gợi ý dịp mặc và phom dáng',
-          removeBg ? 'Lưu ảnh và tách nền' : 'Lưu vào tủ đồ',
-        ]} />
+        {split ? (
+          <ThoughtLine title="AI đang tách từng món" steps={['Lưu ảnh gốc', 'Tách từng món khỏi ảnh', 'Lưu vào tủ đồ']} />
+        ) : (
+          <ThoughtLine title="AI đang nhận diện" steps={[
+            'Tìm từng món trong ảnh',
+            'Đọc loại, màu, chất liệu từng món',
+            'Gộp món trùng',
+          ]} />
+        )}
+      </Screen>
+    );
+  }
+
+  if (scan) {
+    const { photo, detections, picked } = scan;
+    const k = picked.filter(Boolean).length;
+    const toggle = (idx: number) => setScan({ ...scan, picked: picked.map((v, i) => (i === idx ? !v : v)) });
+    return (
+      <Screen title="Kiểm tra món đồ" subtitle={`${detections.length} món từ 1 ảnh`}
+        onBack={() => setScan(null)}
+        footer={(
+          <View style={{ gap: 8 }}>
+            <Button title={`Thêm ${k} món`} disabled={k === 0} onPress={addPicked} />
+            <Button title="Chụp lại" kind="outline" onPress={() => setScan(null)} />
+          </View>
+        )}>
+        {error ? <ErrorBox message={error} onRetry={addPicked} /> : null}
+        <View style={{ height: 120, backgroundColor: C.pinkSoft, borderRadius: R.card, overflow: 'hidden' }}>
+          <Image source={{ uri: photo.uri }} resizeMode="contain" style={{ flex: 1 }} accessibilityLabel="Ảnh gốc" />
+        </View>
+        {detections.map((d, idx) => (
+          <Pressable key={idx} onPress={() => toggle(idx)} accessibilityRole="checkbox" accessibilityState={{ checked: picked[idx] }} accessibilityLabel={d.name}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 64, padding: 8, backgroundColor: C.card, borderRadius: R.card, borderWidth: 1, borderColor: C.line }}>
+            <View style={{ width: 48, height: 48, borderRadius: 14, backgroundColor: C.pink, alignItems: 'center', justifyContent: 'center' }}>
+              <Icon name="hanger" size={22} color={C.wine} />
+            </View>
+            <View style={{ flex: 1, gap: 2 }}>
+              <Text numberOfLines={1} style={{ fontSize: 15, fontWeight: '700', color: C.text }}>{d.name}</Text>
+              <Text numberOfLines={1} style={T.sub}>{`${KIND_LABEL[d.kind] ?? d.kind} · Độ chính xác ${Math.round(d.confidence)}%`}</Text>
+            </View>
+            <View style={{ width: 26, height: 26, borderRadius: 13, alignItems: 'center', justifyContent: 'center', backgroundColor: picked[idx] ? C.wine : 'transparent', borderWidth: 2, borderColor: picked[idx] ? C.wine : C.line }}>
+              {picked[idx] ? <Icon name="check" size={16} color="#FFFFFF" /> : null}
+            </View>
+          </Pressable>
+        ))}
       </Screen>
     );
   }
@@ -147,13 +236,14 @@ export default function Wardrobe({ items, loading, removeBg, onReload, autoAdd, 
         {tab === 'shop' ? <ShopCatalog items={items} onOpenStudio={onOpenStudio} /> : (
           <>
             {error ? <ErrorBox message={error} onRetry={() => setError(null)} /> : null}
+            {added ? <Banner text={added} /> : null}
             <TextInput value={query} onChangeText={setQuery} placeholder="Tìm trong tủ đồ" placeholderTextColor={C.sub}
               accessibilityLabel="Tìm trong tủ đồ" autoCorrect={false}
-              style={{ height: 48, backgroundColor: C.card, borderWidth: 1, borderColor: C.line, borderRadius: 14, paddingHorizontal: 16, fontSize: 15, color: C.text }} />
+              style={{ height: 46, backgroundColor: C.card, borderWidth: 1, borderColor: C.line, borderRadius: R.chip + 2, paddingHorizontal: 16, fontSize: 15, color: C.text }} />
             <View style={{ flexDirection: 'row', gap: 8 }}>
               {FILTERS.map((f) => (
                 <Pressable key={f.key} onPress={() => setFilter(f.key)} accessibilityRole="button" accessibilityState={{ selected: filter === f.key }}
-                  style={{ flex: 1, minHeight: 40, alignItems: 'center', justifyContent: 'center', borderRadius: R.chip, borderWidth: 1,
+                  style={{ flex: 1, minHeight: 44, alignItems: 'center', justifyContent: 'center', borderRadius: R.chip, borderWidth: 1,
                     backgroundColor: filter === f.key ? C.pink : C.card, borderColor: filter === f.key ? C.pink : C.line }}>
                   <Text numberOfLines={1} style={{ fontSize: 13, fontWeight: filter === f.key ? '700' : '500', color: filter === f.key ? C.wine : C.text }}>{f.label}</Text>
                 </Pressable>

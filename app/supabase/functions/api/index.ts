@@ -219,6 +219,34 @@ async function readGarment(b64: string) {
   return JSON.parse(res.output_text);
 }
 
+// Every piece in a photo (a full-body photo can hold top, bottom, shoes, bag...), each with a confidence.
+const { is_clothing: _skip, ...PIECE_PROPS } = ITEM_SCHEMA.properties;
+const DETECT_SCHEMA = {
+  type: "object", additionalProperties: false, required: ["pieces"],
+  properties: { pieces: { type: "array", items: {
+    type: "object", additionalProperties: false,
+    required: [...ITEM_SCHEMA.required.filter((k) => k !== "is_clothing"), "confidence"],
+    properties: { ...PIECE_PROPS, confidence: { type: "integer", description: "Độ chắc chắn 0-100" } },
+  } } },
+};
+async function detectGarments(b64: string): Promise<Row[]> {
+  const res = await openai().responses.create({
+    model: VISION_MODEL,
+    reasoning: { effort: "none" },
+    max_output_tokens: 1800,
+    instructions: "Bạn nhận diện quần áo cho app tủ đồ. Liệt kê TỪNG món thời trang nhìn thấy rõ trong ảnh (đang mặc hoặc đặt riêng): áo, áo khoác, quần, chân váy, váy liền, giày, túi. " +
+      "Mỗi món một dòng, không gộp, không lặp; bỏ qua món của người khác ở hậu cảnh và món bị che gần hết. Tối đa 6 món. Không có món nào thì trả danh sách rỗng. " +
+      "Trả lời tiếng Việt, ngắn, không emoji. kind: top=áo, bottom=quần hoặc chân váy, dress=váy liền, outer=áo khoác, shoes=giày, bag=túi.",
+    input: [{ role: "user", content: [
+      { type: "input_text", text: "Liệt kê các món đồ trong ảnh." },
+      { type: "input_image", image_url: `data:image/jpeg;base64,${b64}`, detail: "high" },
+    ] }],
+    text: { format: { type: "json_schema", name: "pieces", strict: true, schema: DETECT_SCHEMA } },
+  // deno-lint-ignore no-explicit-any
+  } as any);
+  return (JSON.parse(res.output_text).pieces as Row[]).filter((p) => KINDS.includes(p.kind)).slice(0, 6);
+}
+
 // remove.bg: limited free quota, so it only runs when the app asks for it AND the key is configured.
 async function removeBackground(bytes: Uint8Array): Promise<Uint8Array | null> {
   const key = Deno.env.get("REMOVEBG_API_KEY");
@@ -239,14 +267,16 @@ async function removeBackground(bytes: Uint8Array): Promise<Uint8Array | null> {
 declare const EdgeRuntime: { waitUntil(p: Promise<unknown>): void };
 const CUTOUT_MODEL = Deno.env.get("CUTOUT_MODEL") ?? "gpt-image-2.6-flare";
 // tall: trousers, dresses and coats get a portrait canvas so their ends are not cut off.
-async function cutoutWithAI(id: string, device: string, bytes: Uint8Array, tall: boolean): Promise<void> {
+// target: for multi-piece photos, which piece to extract (the photo may show a person wearing several).
+async function cutoutWithAI(id: string, device: string, bytes: Uint8Array, tall: boolean, target?: string): Promise<void> {
   const t0 = Date.now();
   try {
+    const only = target ? `The photo may show a person wearing several pieces. Extract ONLY this piece: ${target}. Show it alone as a flat product photo, not worn. Do not add any logo, brand mark or text that is not visible in the photo. ` : "";
     // deno-lint-ignore no-explicit-any
     const params: any = {
       model: CUTOUT_MODEL,
       image: await toFile(bytes, "item.jpg", { type: "image/jpeg" }),
-      prompt: "Remove the background completely. Keep the garment exactly as it is: same shape, colour, pattern, texture and details. " +
+      prompt: only + "Remove the background completely. Keep the garment exactly as it is: same shape, colour, pattern, texture and details. " +
         "Show only the garment, centred, on a fully transparent background. The whole garment must fit inside the frame with a small " +
         "empty margin on every side; do not crop any part of it. No person, hanger, mannequin, text or shadow.",
       background: "transparent",
@@ -484,6 +514,42 @@ async function route(action: string, device: string, body: any): Promise<unknown
       console.log("item.add", { ms: Date.now() - t0, model: VISION_MODEL, cutout: !!cutoutPath });
       return { item: (await toItems([row as Row]))[0] };
     }
+    case "items.detect": {
+      const b64 = body.image_base64;
+      if (typeof b64 !== "string" || b64.length < 1000) throw new HttpError(400, "Thiếu ảnh.");
+      if (b64.length > MAX_IMAGE_B64) throw new HttpError(413, "Ảnh quá lớn, thử chụp lại nhé.");
+      const t0 = Date.now();
+      const detections = await detectGarments(b64);
+      console.log("items.detect", { ms: Date.now() - t0, model: VISION_MODEL, n: detections.length });
+      if (!detections.length) throw new HttpError(422, "Mình chưa nhận ra món đồ trong ảnh, bạn chụp lại nhé.");
+      return { detections };
+    }
+    case "items.add_many": {
+      const b64 = body.image_base64;
+      if (typeof b64 !== "string" || b64.length < 1000) throw new HttpError(400, "Thiếu ảnh.");
+      if (b64.length > MAX_IMAGE_B64) throw new HttpError(413, "Ảnh quá lớn, thử chụp lại nhé.");
+      const list = (Array.isArray(body.detections) ? body.detections : []).filter((d: Row) => d && KINDS.includes(d.kind)).slice(0, 6) as Row[];
+      if (!list.length) throw new HttpError(400, "Chưa chọn món nào.");
+      const bytes = decodeB64(b64);
+      // One upload shared by every piece from this photo; item.delete keeps it while another item uses it.
+      const imagePath = `items/${device}/${crypto.randomUUID()}.jpg`;
+      const up = await storage().from(BUCKET).upload(imagePath, bytes, { contentType: "image/jpeg" });
+      if (up.error) throw new Error(`upload: ${up.error.message}`);
+      const rows: Row[] = [];
+      for (const d of list) {
+        const id = crypto.randomUUID();
+        const occ = (Array.isArray(d.occasions) ? d.occasions : []).filter((o: unknown) => OCCASIONS.includes(String(o))).slice(0, 7);
+        const [row] = await sql`insert into items (id, device_id, name, kind, category, color_name, color_hex, material, pattern, occasions, length, rise, fit, image_path, cutout_path)
+          values (${id}, ${device}, ${clip(d.name, 80)}, ${d.kind}, ${clip(d.category, 60)}, ${clip(d.color_name, 40)}, ${clip(d.color_hex, 9)}, ${clip(d.material, 40)},
+            ${clip(d.pattern, 40)}, ${sql.json(occ)}, ${clip(d.length, 20)}, ${clip(d.rise, 20)}, ${["om", "vua", "rong"].includes(d.fit) ? d.fit : "vua"}, ${imagePath}, ${null})
+          returning ${ITEM_COLS}`;
+        rows.push(row as Row);
+        if (body.remove_bg === true)
+          EdgeRuntime.waitUntil(cutoutWithAI(id, device, bytes, ["bottom", "dress", "outer"].includes(d.kind), `${clip(d.name, 80)} (${clip(d.category, 60)}, ${clip(d.color_name, 40)})`));
+      }
+      console.log("items.add_many", { n: rows.length, cutout: body.remove_bg === true });
+      return { items: await toItems(rows) };
+    }
     case "item.update": {
       const p = body.patch ?? {};
       const text: Record<string, string> = {};
@@ -499,7 +565,11 @@ async function route(action: string, device: string, body: any): Promise<unknown
     }
     case "item.delete": {
       const [row] = await sql`delete from items where id = ${clip(body.id, 40)} and device_id = ${device} returning image_path, cutout_path`;
-      if (row) await storage().from(BUCKET).remove([row.image_path, row.cutout_path].filter(Boolean));
+      if (row) {
+        // Pieces added from one photo share image_path: keep it while another item still uses it.
+        const [other] = await sql`select 1 from items where image_path = ${row.image_path} limit 1`;
+        await storage().from(BUCKET).remove([other ? null : row.image_path, row.cutout_path].filter(Boolean) as string[]);
+      }
       return { ok: true };
     }
     case "weather.get": {

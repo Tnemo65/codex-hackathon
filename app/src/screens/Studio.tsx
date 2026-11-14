@@ -38,7 +38,7 @@ export default function Studio({ items, profile, onOpenTryOn, onPlanChanged, onO
 }) {
   const { width: winW } = useWindowDimensions();
   const boxW = Math.min(winW, 520) - S.page * 2;
-  const [mode, setMode] = useState<Mode>('canvas');
+  const [mode, setMode] = useState<Mode>('body');
   const [ids, setIds] = useState<string[]>([]);
   const [saved, setSaved] = useState<Saved[]>([]);
   const [busy, setBusy] = useState(false);
@@ -188,7 +188,7 @@ export default function Studio({ items, profile, onOpenTryOn, onPlanChanged, onO
           </View>
 
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-            <Text style={T.h2}>Chọn món để phối</Text>
+            <Text style={T.h2}>Chọn món trong tủ</Text>
             <Text style={T.sub}>{picked.length} món đang phối</Text>
           </View>
           {ROWS.map((row) => {
@@ -282,7 +282,7 @@ const st = StyleSheet.create({
   buyImg: { width: 48, height: 48, backgroundColor: C.pinkSoft, borderRadius: 10 },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: S.gap },
   savedCard: { width: (Math.min(Dimensions.get('window').width, 520) - S.page * 2 - S.gap) / 2, backgroundColor: C.card, borderRadius: R.card, padding: 12 },
-  thumbs: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, height: 112, backgroundColor: C.pinkSoft, borderRadius: 12, padding: 4, overflow: 'hidden' },
-  thumb: { width: '47%', height: 50 },
+  thumbs: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, height: 150, backgroundColor: C.pinkSoft, borderRadius: 12, padding: 4, overflow: 'hidden' },
+  thumb: { width: '47%', height: 68 },
   del: { position: 'absolute', top: 16, right: 16, width: 32, height: 32, borderRadius: 16, backgroundColor: 'rgba(255,255,255,0.9)', alignItems: 'center', justifyContent: 'center' },
 });

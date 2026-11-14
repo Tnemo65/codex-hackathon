@@ -48,7 +48,7 @@ export default function ProfileScreen({ profile, restoreCode, removeBg, onToggle
   };
 
   return (
-    <Screen title="Hồ sơ">
+    <Screen title="Hồ sơ" subtitle={profile.name ? `Chào ${profile.name}` : undefined}>
       <Card style={{ gap: 8 }}>
         <Text style={T.h2}>Về bạn</Text>
         <Wrap>{WEAR.map(([v, l]) => <Chip key={v} label={l} selected={p.wear === v} onPress={() => { setSaved(false); setP((x) => (x.wear === v ? x : { ...x, wear: v, styles: [] })); }} />)}</Wrap>

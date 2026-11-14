@@ -158,11 +158,10 @@ export default function Calendar({ items, onOpenTryOn, onOpenProfile, profile }:
 
       {loading ? <Loading text="Đang mở lịch…" /> : err ? <ErrorBox message={err} onRetry={load} /> : mode === 'month' ? (
         <Card style={{ gap: 12 }}>
-          <Text style={T.h2}>Chi tiết ngày</Text>
-          <Text style={T.sub}>{dateLabel(selected)}</Text>
+          <Text style={[T.small, { color: C.text }]}>{dateLabel(selected)}</Text>
           {wx ? (
             <View style={{ gap: 2 }}>
-              <Text style={[T.body, { fontWeight: '600' }]}>{wxLine}</Text>
+              <Text style={[T.small, { fontWeight: '600' }]}>{wxLine}</Text>
               {rec && sel?.status === 'worn' ? <Text style={T.small}>Thời tiết lúc mặc</Text> : null}
             </View>
           ) : <Text style={T.small}>Chưa có dự báo cho ngày này</Text>}
@@ -194,14 +193,16 @@ export default function Calendar({ items, onOpenTryOn, onOpenProfile, profile }:
             const p = plans[key];
             const first = itemsOf(p)[0];
             const isToday = key === today;
-            const meta = [p?.weather ? `${Math.round(p.weather.t_max)}°` : null, p ? STATUS[p.status] : null].filter(Boolean).join(' · ');
+            const fw = fc[key];
+            const meta = p?.status === 'worn' ? 'Đã mặc · Nhật ký'
+              : [p?.weather ? `${Math.round(p.weather.t_max)}°` : fw ? `${Math.round(fw.t_max)}°` : null, p?.weather?.morning.cond ?? fw?.cond ?? (p ? STATUS[p.status] : null)].filter(Boolean).join(' · ');
             return (
               <Pressable key={key} onPress={() => setSelected(key)} accessibilityRole="button" accessibilityLabel={dateLabel(key)}
                 style={[st.weekRow, (isToday || key === selected) && { backgroundColor: C.pink }]}>
                 <Text style={st.weekDay}>{WEEK[i]} {`${d.getDate()}`.padStart(2, '0')}</Text>
                 <Thumb item={first} size={64} />
                 <View style={{ flex: 1, gap: 4 }}>
-                  <Text style={{ fontSize: 15, fontWeight: '700', color: C.text }} numberOfLines={2}>{p?.outfit?.name ?? 'Chưa có outfit'}</Text>
+                  <Text style={{ fontSize: 15, fontWeight: '700', color: C.text }} numberOfLines={2}>{p?.outfit?.name ?? 'Chưa chốt outfit'}</Text>
                   {meta ? <Text style={T.small}>{meta}</Text> : null}
                 </View>
               </Pressable>

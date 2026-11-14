@@ -12,11 +12,11 @@ import { BOTTOM_INSET, Button, Card, Chip, Icon, TOP_INSET } from '../ui';
 type Next = 'add_camera' | 'add_library' | 'home';
 const WEARS: [Wear, string][] = [['f', 'Đồ nữ'], ['m', 'Đồ nam'], ['u', 'Cả hai']];
 const CODES: [DressCode, string][] = [['dong_phuc', 'Có đồng phục'], ['lich_su', 'Lịch sự, kín đáo'], ['thoai_mai', 'Thoải mái']];
-const TITLES = ['Kể chút về bạn', 'Dáng người và thói quen', 'Style bạn thích', 'Thêm đồ bạn hay mặc'];
+const TITLES = ['Kể chút về bạn', 'Thói quen mặc đồ', 'Style bạn thích', 'Thêm đồ bạn hay mặc'];
 const SUBS = [
-  'Để gợi ý đúng người, đúng dáng.',
-  'Giúp AI chọn form dáng hợp với bạn.',
-  'Chọn ít nhất 3 style hoặc thêm style của riêng bạn.',
+  'Mình dùng câu trả lời để gợi ý outfit hợp với ngày của bạn.',
+  'Chọn những dịp bạn hay cần outfit.',
+  'Chọn ít nhất 3 style để gợi ý hợp gu hơn.',
   'Chụp vài món bạn hay mặc, AI sẽ tự điền thông tin.',
 ];
 const row = { flexDirection: 'row' as const, flexWrap: 'wrap' as const, gap: 8 };
@@ -133,7 +133,7 @@ export default function Onboarding({ initial, onDone, onRestore }: {
           ) : null}
         </View>
         <View style={{ flexDirection: 'row', gap: 6 }}>
-          {[0, 1, 2, 3].map((i) => <View key={i} style={{ flex: 1, height: 4, borderRadius: 2, backgroundColor: i <= step ? C.wine : C.pink }} />)}
+          {[0, 1, 2, 3].map((i) => <View key={i} style={{ flex: 1, height: 5, borderRadius: 3, backgroundColor: i <= step ? C.wine : C.pink }} />)}
         </View>
         <Text style={T.sub}>Bước {step + 1} / 4</Text>
         <Text style={T.h1}>{TITLES[step]}</Text>
@@ -233,7 +233,12 @@ export default function Onboarding({ initial, onDone, onRestore }: {
             <Text style={{ fontSize: 12, color: C.sub }}>Bấm nút lại để thử lại.</Text>
           </View>
         ) : null}
-        {step < 3 ? (
+        {step === 1 || step === 2 ? (
+          <View style={{ flexDirection: 'row', gap: 14 }}>
+            <Button title="Quay lại" kind="outline" onPress={() => { setErr(null); setStep(step - 1); }} style={{ flex: 119 }} />
+            <Button title="Tiếp tục" onPress={next} disabled={!canNext} style={{ flex: 217 }} />
+          </View>
+        ) : step === 0 ? (
           <Button title="Tiếp tục" onPress={next} disabled={!canNext} />
         ) : (
           <>
