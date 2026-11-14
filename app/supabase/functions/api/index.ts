@@ -208,7 +208,7 @@ async function readGarment(b64: string) {
     reasoning: { effort: "none" },
     max_output_tokens: 600,
     instructions: "Bạn nhận diện một món đồ thời trang trong ảnh cho app tủ đồ. Nếu ảnh có nhiều món, chọn món chính. " +
-      "Trả lời tiếng Việt, ngắn, không emoji. kind: top=áo, bottom=quần hoặc chân váy, dress=váy liền, outer=áo khoác, shoes=giày, bag=túi.",
+      "Trả lời tiếng Việt, ngắn, không emoji. kind: top=áo mặc trong (áo thun, sơ mi, áo len chui đầu), bottom=quần hoặc chân váy, dress=váy liền, outer=áo khoác hoặc lớp mặc ngoài (cardigan, blazer, hoodie khoá kéo, áo gió, áo khoác denim), shoes=giày, bag=túi.",
     input: [{ role: "user", content: [
       { type: "input_text", text: "Điền thông tin cho món đồ trong ảnh." },
       { type: "input_image", image_url: `data:image/jpeg;base64,${b64}`, detail: "high" },
@@ -236,7 +236,7 @@ async function detectGarments(b64: string): Promise<Row[]> {
     max_output_tokens: 1800,
     instructions: "Bạn nhận diện quần áo cho app tủ đồ. Liệt kê TỪNG món thời trang nhìn thấy rõ trong ảnh (đang mặc hoặc đặt riêng): áo, áo khoác, quần, chân váy, váy liền, giày, túi. " +
       "Mỗi món một dòng, không gộp, không lặp; bỏ qua món của người khác ở hậu cảnh và món bị che gần hết. Tối đa 6 món. Không có món nào thì trả danh sách rỗng. " +
-      "Trả lời tiếng Việt, ngắn, không emoji. kind: top=áo, bottom=quần hoặc chân váy, dress=váy liền, outer=áo khoác, shoes=giày, bag=túi.",
+      "Trả lời tiếng Việt, ngắn, không emoji. kind: top=áo mặc trong (áo thun, sơ mi, áo len chui đầu), bottom=quần hoặc chân váy, dress=váy liền, outer=áo khoác hoặc lớp mặc ngoài (cardigan, blazer, hoodie khoá kéo, áo gió, áo khoác denim), shoes=giày, bag=túi.",
     input: [{ role: "user", content: [
       { type: "input_text", text: "Liệt kê các món đồ trong ảnh." },
       { type: "input_image", image_url: `data:image/jpeg;base64,${b64}`, detail: "high" },

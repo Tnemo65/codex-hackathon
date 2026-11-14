@@ -39,7 +39,7 @@ export default function Wardrobe({ items, loading, removeBg, onReload, autoAdd, 
   const [query, setQuery] = useState('');
   const { width } = useWindowDimensions();
   const [sheet, setSheet] = useState(false);
-  const [busy, setBusy] = useState<{ uri: string; mode: 'detect' | 'split' } | null>(null); // photo AI is reading
+  const [busy, setBusy] = useState<{ uri: string; mode: 'detect' | 'split'; note?: string } | null>(null); // photo AI is reading
   const [scan, setScan] = useState<{ photo: Photo; detections: Detection[]; picked: boolean[] } | null>(null); // 2+ pieces waiting for confirm
   const [added, setAdded] = useState<string | null>(null);
   const [multiWait, setMultiWait] = useState<string[]>([]); // ids of items added from one photo still waiting for their cut-out
@@ -126,10 +126,20 @@ export default function Wardrobe({ items, loading, removeBg, onReload, autoAdd, 
     setBusy({ uri: photo.uri, mode: 'split' });
     try {
       const { items: created } = await api.itemsAddMany(photo.base64, detections.filter((_, i) => picked[i]), removeBg);
+      // Wait for the cut-outs here, on the waiting screen (about 10-15 s), so the wardrobe opens complete
+      // instead of saying "added" and then making the user wait again.
+      let pending = removeBg ? created.filter((i) => !i.cutout_url).map((i) => i.id) : [];
+      const total = pending.length;
+      for (let tries = 0; pending.length && tries < 15; tries++) {
+        setBusy({ uri: photo.uri, mode: 'split', note: `Đã tách nền ${total - pending.length}/${total} món` });
+        await new Promise((r) => setTimeout(r, 3000));
+        const list = await api.itemsList().then((r) => r.items).catch(() => null);
+        if (list) pending = pending.filter((id) => !list.find((i) => i.id === id)?.cutout_url);
+      }
       await onReload().catch(() => {});
       setScan(null);
-      setAdded(`Đã thêm ${created.length} món${removeBg ? ' · ảnh tách nền sẽ hiện sau ít giây' : ''}`);
-      if (removeBg) setMultiWait(created.filter((i) => !i.cutout_url).map((i) => i.id));
+      setAdded(pending.length ? `Đã thêm ${created.length} món · còn ${pending.length} ảnh đang tách nền` : `Đã thêm ${created.length} món`);
+      if (pending.length) setMultiWait(pending);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Có lỗi xảy ra.');
     } finally {
@@ -161,7 +171,10 @@ export default function Wardrobe({ items, loading, removeBg, onReload, autoAdd, 
           <Image source={{ uri: busy.uri }} resizeMode="contain" style={{ flex: 1 }} accessibilityLabel="Ảnh món đồ vừa chọn" />
         </View>
         {split ? (
-          <ThoughtLine title="AI đang tách từng món" steps={['Lưu ảnh gốc', 'Tách từng món khỏi ảnh', 'Lưu vào tủ đồ']} />
+          <>
+            <ThoughtLine title="AI đang tách từng món" steps={['Lưu ảnh gốc', 'Tách từng món khỏi ảnh', 'Lưu vào tủ đồ', 'Tách nền từng món']} />
+            {busy.note ? <Text style={[T.sub, { textAlign: 'center' }]}>{busy.note}</Text> : null}
+          </>
         ) : (
           <ThoughtLine title="AI đang nhận diện" steps={[
             'Tìm từng món trong ảnh',

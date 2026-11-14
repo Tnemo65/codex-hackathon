@@ -30,6 +30,12 @@ function withItem(current: Item[], item: Item): Item[] {
   const drop = new Set<Kind>([item.kind]);
   if (item.kind === 'dress') { drop.add('top'); drop.add('bottom'); }
   if (item.kind === 'top' || item.kind === 'bottom') drop.add('dress');
+  // Two tops may layer (a tee under a cardigan or shirt): keep the newest earlier top, replace only the oldest.
+  if (item.kind === 'top') {
+    const tops = current.filter((p) => p.kind === 'top');
+    const keep = tops.length ? tops[tops.length - 1].id : null;
+    return [...current.filter((p) => !drop.has(p.kind) || p.id === keep), item];
+  }
   return [...current.filter((p) => !drop.has(p.kind)), item];
 }
 
