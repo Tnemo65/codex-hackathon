@@ -235,7 +235,8 @@ async function removeBackground(bytes: Uint8Array): Promise<Uint8Array | null> {
 // It takes tens of seconds, so it runs after the response and fills items.cutout_path when done.
 declare const EdgeRuntime: { waitUntil(p: Promise<unknown>): void };
 const CUTOUT_MODEL = Deno.env.get("CUTOUT_MODEL") ?? "gpt-image-2.6-flare";
-async function cutoutWithAI(id: string, device: string, bytes: Uint8Array): Promise<void> {
+// tall: trousers, dresses and coats get a portrait canvas so their ends are not cut off.
+async function cutoutWithAI(id: string, device: string, bytes: Uint8Array, tall: boolean): Promise<void> {
   const t0 = Date.now();
   try {
     // deno-lint-ignore no-explicit-any
@@ -243,11 +244,12 @@ async function cutoutWithAI(id: string, device: string, bytes: Uint8Array): Prom
       model: CUTOUT_MODEL,
       image: await toFile(bytes, "item.jpg", { type: "image/jpeg" }),
       prompt: "Remove the background completely. Keep the garment exactly as it is: same shape, colour, pattern, texture and details. " +
-        "Show only the garment, centred, fully visible, on a fully transparent background. No person, hanger, mannequin, text or shadow.",
+        "Show only the garment, centred, on a fully transparent background. The whole garment must fit inside the frame with a small " +
+        "empty margin on every side; do not crop any part of it. No person, hanger, mannequin, text or shadow.",
       background: "transparent",
       output_format: "png",
       quality: "low",
-      size: "1024x1024",
+      size: tall ? "1024x1536" : "1024x1024",
     };
     if (CUTOUT_MODEL.startsWith("gpt-image-2.6")) params.complexity = "low";
     const res = await openai().images.edit(params);
@@ -292,7 +294,23 @@ const STYLIST_RULES =
   "Mỗi bộ: một áo (top) và một quần hoặc chân váy (bottom), hoặc một váy liền (dress); thêm áo khoác (outer), giày (shoes), túi (bag) nếu tủ có và hợp trời. " +
   "Mỗi loại tối đa một món. Xét thời tiết sáng, chiều, tối; dịp; cách di chuyển (đi xe máy thì chú ý mưa, nắng, gió, váy ngắn bất tiện); quy định ăn mặc; phom người dùng thích. " +
   "fit_note phải gắn với chiều cao và tỷ lệ cơ thể của người dùng (vd cạp cao với áo ngắn giúp chân trông dài hơn), nói điều bộ đồ làm được, không chê cơ thể. " +
+  "Mã món chỉ dùng trong item_ids; trong câu chữ hãy gọi món bằng tên thường gọi, không viết mã. " +
   "Trả lời tiếng Việt, câu ngắn, thân thiện, không emoji.";
+
+const SHOP_SCHEMA = {
+  type: "object", additionalProperties: false, required: ["suggestions"],
+  properties: { suggestions: { type: "array", items: {
+    type: "object", additionalProperties: false, required: ["name", "kind", "color_name", "why", "query", "price_hint"],
+    properties: {
+      name: { type: "string", description: "Tên sản phẩm ngắn tiếng Việt, vd 'Quần âu đen ống suông'" },
+      kind: { type: "string", enum: KINDS },
+      color_name: { type: "string" },
+      why: { type: "string", description: "1 câu: món này phối được với món nào trong tủ (gọi bằng tên)" },
+      query: { type: "string", description: "Từ khoá tìm trên sàn mua sắm tiếng Việt, 2-5 từ" },
+      price_hint: { type: "string", description: "Khoảng giá ước đoán, vd '200–400k'" },
+    },
+  } } },
+};
 
 const PROPORTION: Record<string, string> = { long_torso: "lưng dài, chân ngắn", balanced: "cân đối", long_legs: "chân dài, lưng ngắn" };
 const COMMUTE: Record<string, string> = { xe_may: "xe máy", o_to: "ô tô", xe_buyt: "xe buýt", di_bo: "đi bộ" };
@@ -333,8 +351,17 @@ function cleanOutfit(o: Row, toLong: Map<string, string>, byId: Map<string, Row>
     const drop = new Set(ids.filter((id) => ["top", "bottom"].includes(byId.get(id)!.kind)));
     for (const id of drop) ids.splice(ids.indexOf(id), 1);
   } else if (!(seen.has("top") && seen.has("bottom"))) return null;
-  return { item_ids: ids, name: clip(o.name, 60), why: clip(o.why, 400), fit_note: clip(o.fit_note, 300),
-    warnings: (o.warnings ?? []).slice(0, 3).map((w: unknown) => clip(w, 160)) };
+  const say = (t: unknown, n: number) => clip(humanize(String(t ?? ""), toLong, byId), n);
+  return { item_ids: ids, name: say(o.name, 60), why: say(o.why, 400), fit_note: say(o.fit_note, 300),
+    warnings: (o.warnings ?? []).slice(0, 3).map((w: unknown) => say(w, 160)) };
+}
+
+// The model sometimes writes the internal codes (i3) in its sentences: swap them for the garment names.
+function humanize(text: string, toLong: Map<string, string>, byId: Map<string, Row>): string {
+  return text.replace(/\bi\d+\b/g, (code) => {
+    const it = byId.get(toLong.get(code) ?? "");
+    return it ? String(it.name).toLowerCase() : "";
+  }).replace(/\s{2,}/g, " ").trim();
 }
 
 async function loadContext(device: string) {
@@ -403,7 +430,7 @@ async function route(action: string, device: string, body: any): Promise<unknown
           ${clip(ai.pattern, 40)}, ${sql.json(ai.occasions ?? [])}, ${ai.length ?? ""}, ${ai.rise ?? ""}, ${ai.fit ?? "vua"}, ${imagePath}, ${cutoutPath})
         returning ${ITEM_COLS}`;
       // No remove.bg result: let the AI cut-out run in the background; the app sees it on the next items.list.
-      if (body.remove_bg === true && !cutoutPath) EdgeRuntime.waitUntil(cutoutWithAI(id, device, bytes));
+      if (body.remove_bg === true && !cutoutPath) EdgeRuntime.waitUntil(cutoutWithAI(id, device, bytes, ["bottom", "dress", "outer"].includes(ai.kind)));
       console.log("item.add", { ms: Date.now() - t0, model: VISION_MODEL, cutout: !!cutoutPath });
       return { item: (await toItems([row as Row]))[0] };
     }
@@ -432,9 +459,29 @@ async function route(action: string, device: string, body: any): Promise<unknown
       if (!weather) throw new HttpError(502, "Chưa lấy được thời tiết, thử lại nhé.");
       return { weather };
     }
+    case "plans.range": {
+      const from = checkDate(body.from);
+      const to = checkDate(body.to);
+      const days = (Date.parse(to) - Date.parse(from)) / 86400000;
+      if (!(days >= 0 && days <= 62)) throw new HttpError(400, "Khoảng ngày không hợp lệ.");
+      const rows = await sql`select ${PLAN_COLS} from plans where device_id = ${device} and date between ${from} and ${to} order by date`;
+      return { plans: rows.map(toPlan) };
+    }
     case "plan.get": {
-      const [r] = await sql`select ${PLAN_COLS} from plans where device_id = ${device} and date = ${checkDate(body.date)}`;
-      return { plan: r ? toPlan(r) : null };
+      const date = checkDate(body.date);
+      const [r] = await sql`select ${PLAN_COLS} from plans where device_id = ${device} and date = ${date}`;
+      if (!r) return { plan: null };
+      // A plan whose garments were deleted is useless: drop it so the app asks for a fresh suggestion.
+      const ids: string[] = (r.outfit?.item_ids ?? []).map(String);
+      if (ids.length) {
+        const [{ n }] = await sql`select count(*)::int as n from items where device_id = ${device} and id::text in ${sql(ids)}`;
+        // keep a worn day as history unless every garment is gone
+        if (n === 0 || (r.status !== "worn" && n < Math.min(2, ids.length))) {
+          await sql`delete from plans where device_id = ${device} and date = ${date}`;
+          return { plan: null };
+        }
+      }
+      return { plan: toPlan(r) };
     }
     case "plan.set": {
       const date = checkDate(body.date);
@@ -492,6 +539,30 @@ async function route(action: string, device: string, body: any): Promise<unknown
           weather = excluded.weather, context = excluded.context, updated_at = now() returning ${PLAN_COLS}`;
       return { plan: toPlan(r) };
     }
+    case "shop.suggest": {
+      const { profile, items } = await loadContext(device);
+      if (items.length < 1) throw new HttpError(409, "Thêm vài món vào tủ trước để AI gợi ý nhé.");
+      const list = items.map((it) => ({ name: it.name, kind: it.kind, category: it.category, color: it.color_name, material: it.material, occasions: it.occasions, fit: it.fit }));
+      const t0 = Date.now();
+      const res = await openai().responses.create({
+        model: STYLIST_MODEL,
+        reasoning: { effort: "low" },
+        max_output_tokens: 2000,
+        instructions: "Bạn là stylist cá nhân trong app tủ đồ của người Việt. Nhìn tủ đồ hiện có và gợi ý 4-6 món NÊN MUA THÊM để phối được nhiều bộ hơn. " +
+          "Chỉ gợi ý món còn thiếu, không lặp lại món người dùng đã có. Hợp phong cách, nghề nghiệp, quy định ăn mặc và phom người dùng thích. " +
+          "Mỗi món nói rõ nó phối được với món nào trong tủ (gọi bằng tên). Không nhắc thương hiệu, không emoji. Trả lời tiếng Việt, ngắn gọn.",
+        input: `Người dùng: ${describeUser(profile)}\nTủ đồ: ${JSON.stringify(list)}`,
+        text: { format: { type: "json_schema", name: "shop", strict: true, schema: SHOP_SCHEMA } },
+      // deno-lint-ignore no-explicit-any
+      } as any);
+      const suggestions = (JSON.parse(res.output_text).suggestions as Row[]).slice(0, 6).map((s) => ({
+        name: clip(s.name, 80), kind: KINDS.includes(s.kind) ? s.kind : "top", color_name: clip(s.color_name, 40),
+        why: clip(s.why, 300), query: clip(s.query, 60), price_hint: clip(s.price_hint, 30),
+      })).filter((s) => s.name && s.query);
+      console.log("shop.suggest", { ms: Date.now() - t0, model: STYLIST_MODEL, items: items.length, n: suggestions.length });
+      if (!suggestions.length) throw new HttpError(502, "AI chưa gợi ý được món nào, thử lại nhé.");
+      return { suggestions };
+    }
     case "outfit.edit": {
       const date = checkDate(body.date);
       const text = clip(body.text, 300).trim();
@@ -518,7 +589,7 @@ async function route(action: string, device: string, body: any): Promise<unknown
       const out = JSON.parse(res.output_text);
       const cleaned = cleanOutfit(out, toLong, byId);
       console.log("outfit.edit", { ms: Date.now() - t0, model: EDIT_MODEL, ok: !!cleaned });
-      const message = clip(out.message, 300) || "Đã đổi theo ý bạn.";
+      const message = clip(humanize(String(out.message ?? ""), toLong, byId), 300) || "Đã đổi theo ý bạn.";
       if (!cleaned) return { plan: toPlan(plan), message: "Mình chưa đổi được: " + message };
       const [r] = await sql`update plans set outfit = ${sql.json(cleaned)}, updated_at = now() where device_id = ${device} and date = ${date} returning ${PLAN_COLS}`;
       return { plan: toPlan(r), message };

@@ -1,11 +1,12 @@
-// Design tokens estimated from the Figma file "Tủ đồ thông minh — Outfit mỗi ngày".
+// Design tokens from the Figma file "Tủ đồ thông minh — Outfit mỗi ngày" (frame "Component & màu").
 export const C = {
-  bg: '#FBF6F5',
+  bg: '#FCF8F8', // Nền
   card: '#FFFFFF',
-  pink: '#F9E1E3', // secondary buttons, selected chips, banners
-  pinkSoft: '#FCEEEF', // canvas / image backdrops
-  wine: '#6F2A46', // primary buttons, active tab
-  text: '#2A2327',
+  pink: '#F9DFDF', // Bề mặt chọn: secondary buttons, selected chips, banners
+  pinkSoft: '#FBEFEF', // Nền phụ: canvas / image backdrops
+  accent: '#F5AFAF', // Màu nhấn
+  wine: '#762E48', // Nút & chữ nhấn: primary buttons, active tab
+  text: '#30232A', // Chữ chính
   sub: '#7A6F74',
   line: '#EEE3E3',
   ok: '#2F6B4F',

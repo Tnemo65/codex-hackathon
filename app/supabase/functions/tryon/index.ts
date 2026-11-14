@@ -15,7 +15,7 @@ const MAX_GARMENTS = 5;
 // Free plan wall clock is 150 s (paid 400 s); keep the OpenAI call under it so the job can record a failure.
 const OPENAI_TIMEOUT_MS = 135_000;
 const STALE_MS = 170_000;
-const MAX_JOBS_PER_DEVICE = 6; // per 24 hours
+const MAX_JOBS_PER_DEVICE = 20; // per 24 hours; room for rehearsals and the live demo on one phone
 const MAX_JOBS_GLOBAL = 60; // per 24 hours
 const MAX_BODY_CHARS = (MAX_GARMENTS + 1) * MAX_IMAGE_B64 + 20_000;
 const DEVICE_RE = /^[a-z0-9_]{8,64}$/; // same rule as the `api` function
@@ -208,7 +208,7 @@ async function checkAllowed(device: string) {
       count(*) filter (where device_id = ${device})::int as mine,
       count(*)::int as total
     from tryon_jobs where created_at > now() - interval '24 hours'`;
-  if (q.mine >= MAX_JOBS_PER_DEVICE) throw new HttpError(429, "Hôm nay bạn đã tạo đủ 6 ảnh phối. Mai thử tiếp nhé.");
+  if (q.mine >= MAX_JOBS_PER_DEVICE) throw new HttpError(429, `Hôm nay bạn đã tạo đủ ${MAX_JOBS_PER_DEVICE} ảnh phối. Mai thử tiếp nhé.`);
   if (q.total >= MAX_JOBS_GLOBAL) throw new HttpError(429, "Mặc thử AI đang quá tải hôm nay. Thử lại sau nhé.");
 }
 

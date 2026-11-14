@@ -1,22 +1,30 @@
 # Tủ đồ AI
 
-Mỗi sáng mở app là AI chốt sẵn một bộ đồ từ tủ đồ của bạn, hợp thời tiết và dịp trong ngày, kèm lý do và lời dặn.
+Chụp một món đồ, AI tự đọc loại, màu, chất liệu và tách nền. Mỗi sáng AI phối sẵn 3 bộ từ chính tủ đồ của bạn theo dịp, thời tiết, cách di chuyển và tỉ lệ cơ thể (vd. lưng dài, chân ngắn), kèm lý do và lời dặn. Sửa bộ đồ bằng một câu chat, xem thử trên dáng người của mình, hoặc để AI tạo ảnh mặc thử.
 
-Khung hiện tại (skeleton): 1 màn hình → Supabase Edge Function → OpenAI → outfit + lý do + lời dặn.
+Người dùng: nữ nhân viên văn phòng 22–30 tuổi ở Hà Nội, đi làm bằng xe máy.
 
 ## Luồng
 
 ```
-iPhone (Expo Go, bundle từ EAS Update) → Supabase Edge Function `suggest-outfit` → OpenAI Responses API
+App → Edge Function `api`   → OpenAI Responses API (đọc ảnh món đồ, phối đồ, sửa theo chat)
+                            → OpenAI Images (tách nền món đồ)
+                            → Postgres (hồ sơ, tủ đồ, kế hoạch mặc) + Storage riêng tư (ảnh)
+App → Edge Function `tryon` → OpenAI Images (ảnh mặc thử)
+App → Open-Meteo            (thời tiết theo giờ, không cần khóa)
 ```
 
-Khóa OpenAI chỉ nằm trong secrets của Edge Function. App chỉ có URL Supabase và publishable key (công khai).
+Khóa OpenAI chỉ nằm trong secrets của Edge Function. App chỉ có URL Supabase và publishable key (công khai), không gọi thẳng database.
+
+Không cần đăng nhập: mỗi bản cài nhận một mã thiết bị do server cấp. Màn Hồ sơ có mã khôi phục 12 ký tự để mở lại tủ đồ trên máy khác (Expo Go, APK và bản Xcode lưu riêng).
 
 ## Cài đặt
 
 Biến môi trường: xem `.env.example`.
 
-Đang chạy: Supabase project `tudo-ai` (ref `aivyffaeerowlxmkgxxz`), function `suggest-outfit` (Verify JWT tắt), secret `OPENAI_API_KEY`. Đã deploy bằng editor trên Supabase Dashboard; dùng CLI thì:
+Đang chạy: Supabase project `tudo-ai` (ref `aivyffaeerowlxmkgxxz`), function `api` và `tryon` (Verify JWT tắt, function tự kiểm tra `apikey`). Bảng và bucket do function tự tạo ở lần gọi đầu. `suggest-outfit` là bản skeleton đầu ngày, giữ làm dự phòng.
+
+Secret của function: `OPENAI_API_KEY` (bắt buộc). Tùy chọn: `REMOVEBG_API_KEY` (không có thì AI tự tách nền), `VISION_MODEL`, `STYLIST_MODEL`, `STYLIST_TIER`, `EDIT_MODEL`, `CUTOUT_MODEL`, `TRYON_MODEL`, `TRYON_QUALITY`.
 
 Backend (một lần, rồi mỗi khi sửa function):
 
@@ -24,7 +32,8 @@ Backend (một lần, rồi mỗi khi sửa function):
 npx supabase login
 npx supabase link --project-ref <project-ref>
 npx supabase secrets set OPENAI_API_KEY=<key>
-npm run deploy:fn
+npx supabase functions deploy api --no-verify-jwt
+npx supabase functions deploy tryon --no-verify-jwt
 ```
 
 Đưa 2 biến public vào EAS (một lần):
@@ -58,15 +67,18 @@ Bản web cho người dùng thử (trình duyệt, không tính cho phần demo
 npx expo export --platform web && npx eas-cli deploy --prod
 ```
 
-Log backend: Supabase Dashboard → Edge Functions → `suggest-outfit` → Logs (`request` / `result` / `failed`).
+Bản iPhone cài qua Mac + Xcode: xem `MAC_BUILD.md`.
+
+Log backend: Supabase Dashboard → Edge Functions → `api` / `tryon` → Logs (mỗi dòng có tên action, thời gian chạy, model; lỗi ghi `failed`).
 
 ## Giả lập (mock)
 
-- Tủ đồ và thời tiết đang hardcode trong `App.tsx` (đánh dấu `ponytail:`). Lời gọi AI là thật.
+- Phần lõi không giả lập: đọc ảnh, tách nền, phối đồ, sửa theo chat và ảnh mặc thử đều gọi AI thật; tủ đồ lưu ở Postgres, thời tiết lấy thật từ Open-Meteo.
+- Chế độ xem "Trên người" là hình vẽ 2D dựng theo chiều cao và tỉ lệ cơ thể trong hồ sơ, không phải mô hình 3D đo từ ảnh.
 - Các bước "AI đang phối đồ" / "AI đang đọc ảnh" (`src/components/ThoughtLine.tsx`) hiện theo hẹn giờ vì server chỉ trả kết quả một lần; nội dung bước là đúng dữ liệu AI nhận, đồng hồ và số bộ là đo thật.
 - Các giai đoạn khi chờ ảnh mặc thử (`RefineFrame` trong `src/screens/TryOn.tsx`) chạy theo thời gian đã chờ; ảnh thật chỉ có ở bước cuối.
 
 ## Làm trước vs. làm trong ngày
 
 - Trước 14/11: ý tưởng, đặc tả, prototype HTML (`../idea/`).
-- 14/11: toàn bộ code trong thư mục này.
+- 14/11: toàn bộ code trong thư mục này (app, hai Edge Function, schema database).

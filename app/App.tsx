@@ -4,22 +4,27 @@ import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { api, setDeviceId, todayStr } from './src/api';
+import Calendar from './src/screens/Calendar';
 import Onboarding from './src/screens/Onboarding';
+import Studio from './src/screens/Studio';
+import Stylist from './src/screens/Stylist';
 import ProfileScreen from './src/screens/ProfileScreen';
 import Today from './src/screens/Today';
-import TryOn, { TRYON_READY } from './src/screens/TryOn';
+import TryOn from './src/screens/TryOn';
 import Wardrobe from './src/screens/Wardrobe';
 import { C } from './src/theme';
 import type { Item, Profile } from './src/types';
 import { BOTTOM_INSET, ErrorBox, Icon, Loading } from './src/ui';
 
-type Tab = 'today' | 'wardrobe' | 'tryon' | 'profile';
+type Tab = 'today' | 'calendar' | 'wardrobe' | 'studio' | 'stylist' | 'tryon' | 'profile';
 const REMOVE_BG_KEY = 'tudo.remove_bg';
-const TABS: { id: Tab; label: string; icon: 'home' | 'hanger' | 'layers' | 'user' }[] = [
+// The five tabs from the Figma nav; Hồ sơ opens from the avatar, Mặc thử from Hôm nay / Phối đồ / Stylist.
+const TABS: { id: Tab; label: string; icon: 'home' | 'calendar' | 'hanger' | 'layers' | 'chat' }[] = [
   { id: 'today', label: 'Hôm nay', icon: 'home' },
+  { id: 'calendar', label: 'Lịch', icon: 'calendar' },
   { id: 'wardrobe', label: 'Tủ đồ', icon: 'hanger' },
-  ...(TRYON_READY ? [{ id: 'tryon' as Tab, label: 'Mặc thử', icon: 'layers' as const }] : []),
-  { id: 'profile', label: 'Hồ sơ', icon: 'user' },
+  { id: 'studio', label: 'Phối đồ', icon: 'layers' },
+  { id: 'stylist', label: 'Stylist', icon: 'chat' },
 ];
 
 export default function App() {
@@ -32,6 +37,7 @@ export default function App() {
   const [itemsLoading, setItemsLoading] = useState(false);
   const [tab, setTab] = useState<Tab>('today');
   const [tryOnIds, setTryOnIds] = useState<string[]>([]);
+  const [tryOnFrom, setTryOnFrom] = useState<Tab>('today');
   const [autoAdd, setAutoAdd] = useState<'camera' | 'library' | null>(null);
   const [removeBg, setRemoveBg] = useState(false);
   const [todayKey, setTodayKey] = useState(0); // bump to make Today reload its plan
@@ -81,6 +87,10 @@ export default function App() {
     setTodayKey((k) => k + 1);
   }
 
+  const openTryOn = (ids: string[]) => { setTryOnIds(ids); setTryOnFrom(tab); setTab('tryon'); };
+  const openProfile = () => setTab('profile');
+  const planChanged = () => { setTodayKey((k) => k + 1); setTab('today'); };
+
   let body: React.ReactNode;
   if (booting) {
     body = <View style={{ flex: 1, justifyContent: 'center' }}><Loading text="Đang mở tủ đồ…" /></View>;
@@ -109,7 +119,7 @@ export default function App() {
         items={items}
         profile={profile}
         initialItemIds={tryOnIds}
-        onBack={() => setTab('today')}
+        onBack={() => setTab(tryOnFrom)}
         onUseToday={(ids) => {
           const outfit = { item_ids: ids, name: 'Bộ đã mặc thử', why: 'Bạn chọn bộ này sau khi xem ảnh phối.', fit_note: '', warnings: [] };
           void api.planSet(todayStr(0), 'planned', outfit).catch(() => {}).then(() => {
@@ -120,7 +130,10 @@ export default function App() {
       />
     );
   } else if (tab === 'wardrobe') {
-    body = <Wardrobe items={items} loading={itemsLoading} removeBg={removeBg} onReload={loadItems} autoAdd={autoAdd} onAutoAddHandled={() => setAutoAdd(null)} />;
+    body = <Wardrobe items={items} loading={itemsLoading} removeBg={removeBg} onReload={loadItems} autoAdd={autoAdd} onAutoAddHandled={() => setAutoAdd(null)} onOpenProfile={openProfile} />;
+  } else if (tab === 'calendar' || tab === 'studio' || tab === 'stylist') {
+    const Tabbed = tab === 'calendar' ? Calendar : tab === 'studio' ? Studio : Stylist;
+    body = <Tabbed items={items} profile={profile} onOpenTryOn={openTryOn} onPlanChanged={planChanged} onOpenProfile={openProfile} />;
   } else if (tab === 'profile') {
     body = (
       <ProfileScreen
@@ -142,10 +155,7 @@ export default function App() {
         key={todayKey}
         profile={profile}
         items={items}
-        onOpenTryOn={(ids) => {
-          setTryOnIds(ids);
-          setTab('tryon');
-        }}
+        onOpenTryOn={openTryOn}
         onGoWardrobe={() => setTab('wardrobe')}
         onItemsChanged={() => void loadItems().catch(() => {})}
       />

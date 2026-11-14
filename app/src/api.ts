@@ -1,6 +1,6 @@
 // Client for the `api` Edge Function. The app never talks to the database directly.
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import type { Commute, Item, Outfit, Plan, PlanStatus, Profile, Weather } from './types';
+import type { Commute, Item, Outfit, Plan, PlanStatus, Profile, ShopSuggestion, Weather } from './types';
 
 const API_URL = `${process.env.EXPO_PUBLIC_SUPABASE_URL}/functions/v1/api`;
 const TRYON_URL = `${process.env.EXPO_PUBLIC_SUPABASE_URL}/functions/v1/tryon`;
@@ -137,6 +137,7 @@ export const api = {
 
   weatherGet: async (date: string) => ({ weather: await fetchWeather(date) }),
   planGet: (date: string) => call<{ plan: Plan | null }>('plan.get', { date }),
+  plansRange: (from: string, to: string) => call<{ plans: Plan[] }>('plans.range', { from, to }),
   // AI picks 3 outfits from the wardrobe; the first becomes plan.outfit with status "suggested".
   // The device fetches the forecast and sends it along; without it the AI still suggests, just without weather.
   outfitSuggest: async (date: string, occasion: string, commute: Commute) => {
@@ -145,6 +146,8 @@ export const api = {
   },
   // AI edits the currently selected outfit of that date by a Vietnamese instruction.
   outfitEdit: (date: string, text: string) => call<{ plan: Plan; message: string }>('outfit.edit', { date, text }, 60000),
+  // AI looks at the wardrobe + profile and names 4-6 missing pieces to buy.
+  shopSuggest: () => call<{ suggestions: ShopSuggestion[] }>('shop.suggest', {}, 60000),
   planSet: (date: string, status: PlanStatus, outfit?: Outfit) => call<{ plan: Plan }>('plan.set', { date, status, outfit }),
 };
 

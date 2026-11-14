@@ -44,6 +44,9 @@ export interface Item {
   created_at: string;
 }
 
+// AI-suggested piece to buy; `query` is the Vietnamese keyword used to open shop searches.
+export interface ShopSuggestion { name: string; kind: Kind; color_name: string; why: string; query: string; price_hint: string }
+
 export interface WeatherPart {
   t: number; // °C
   cond: string; // "Nắng nhẹ", "Mưa rào", ...

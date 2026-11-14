@@ -26,7 +26,9 @@ function Row({ label, ai, children }: { label: string; ai: boolean; children: Re
 
 const Wrap = ({ children }: { children: React.ReactNode }) => <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>{children}</View>;
 
-export default function ReviewItem({ item, isNew, onSave, onDelete, onBack }: { item: Item; isNew: boolean; onSave: (patch: Partial<Item>) => Promise<void>; onDelete: () => Promise<void>; onBack: () => void }) {
+// cutout: cut-out image that arrived after `item` was loaded; cutting: the server is still making it.
+export default function ReviewItem({ item, isNew, cutout, cutting, onSave, onDelete, onBack }: { item: Item; isNew: boolean; cutout?: string | null; cutting?: boolean; onSave: (patch: Partial<Item>) => Promise<void>; onDelete: () => Promise<void>; onBack: () => void }) {
+  const cutUrl = cutout ?? item.cutout_url;
   const [f, setF] = useState<Item>(item);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -77,8 +79,8 @@ export default function ReviewItem({ item, isNew, onSave, onDelete, onBack }: { 
       }
     >
       <View style={{ backgroundColor: C.pinkSoft, borderRadius: R.card, padding: 12, gap: 8 }}>
-        {item.cutout_url ? <Badge text="Đã tách nền" tone="ok" /> : null}
-        <Image source={{ uri: item.cutout_url ?? item.image_url }} resizeMode="contain" style={{ width: '100%', height: 260 }} />
+        {cutUrl ? <Badge text="Đã tách nền" tone="ok" /> : cutting ? <Text style={T.small}>AI đang tách nền, khoảng 15 giây…</Text> : null}
+        <Image source={{ uri: cutUrl ?? item.image_url }} resizeMode="contain" style={{ width: '100%', height: 260 }} />
       </View>
       <Row label="Tên món" ai={isNew}>{text('name')}</Row>
       <Row label="Loại" ai={isNew}>

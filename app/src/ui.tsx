@@ -10,7 +10,7 @@ export const BOTTOM_INSET = Platform.OS === 'ios' ? 28 : 8;
 // Shared pressed-state feedback: dim without changing layout bounds.
 export const pressedStyle = ({ pressed }: { pressed: boolean }) => (pressed ? { opacity: 0.6 } : null);
 
-type IconName = 'home' | 'hanger' | 'layers' | 'user' | 'chat' | 'plus' | 'left' | 'right' | 'warn' | 'spark' | 'check' | 'camera' | 'image' | 'close' | 'grid' | 'person' | 'send' | 'trash';
+type IconName = 'home' | 'hanger' | 'layers' | 'user' | 'chat' | 'plus' | 'left' | 'right' | 'warn' | 'spark' | 'check' | 'camera' | 'image' | 'close' | 'grid' | 'person' | 'send' | 'trash' | 'calendar' | 'search';
 
 const PATHS: Record<IconName, string> = {
   home: 'M4 11l8-7 8 7v8a1 1 0 0 1-1 1h-4v-6h-6v6H5a1 1 0 0 1-1-1z',
@@ -31,6 +31,8 @@ const PATHS: Record<IconName, string> = {
   person: 'M12 8a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5zM8 21v-6l-1-5h10l-1 5v6',
   send: 'M4 12l16-7-6 16-3-6z',
   trash: 'M5 7h14M9 7V5h6v2M7 7l1 13h8l1-13',
+  calendar: 'M5 6h14v14H5zM5 10h14M9 4v4M15 4v4',
+  search: 'M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM16 16l4 4',
 };
 
 export function Icon({ name, size = 22, color = C.text }: { name: IconName; size?: number; color?: string }) {
