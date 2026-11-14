@@ -18,6 +18,20 @@ const AI_BUSY = 'AI đang phối đồ cho bạn…';
 // Options to browse. If the selected outfit is not one of them (edited, or saved earlier), it takes the slot `at`.
 const doneText = (p: Plan, t0: number) => `Đã phối ${Math.max(1, p.options?.length ?? 0)} bộ trong ${secs(Date.now() - t0)}`;
 
+// AI explanation types itself out; the rest is laid out transparent so the page does not jump.
+function TypeText({ text }: { text: string }) {
+  const [n, setN] = useState(0);
+  useEffect(() => {
+    const iv = setInterval(() => setN((x) => { if (x >= text.length) { clearInterval(iv); return x; } return x + 3; }), 16);
+    return () => clearInterval(iv);
+  }, [text]);
+  return (
+    <Text style={[T.body, { lineHeight: 21 }]} accessibilityLabel={text}>
+      {text.slice(0, n)}<Text style={{ color: 'transparent' }}>{text.slice(n)}</Text>
+    </Text>
+  );
+}
+
 function optionList(p: Plan | null, at = 0): Outfit[] {
   if (!p) return [];
   const opts = p.options ?? [];
@@ -181,6 +195,23 @@ export default function Today({ profile, items, onOpenTryOn, onGoWardrobe, onIte
     enter.setValue(0);
     Animated.spring(enter, { toValue: 1, useNativeDriver: true, speed: 14, bounciness: 7 }).start();
   }, [idx]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Body/canvas toggle: a pink thumb springs between the two buttons.
+  const thumb = useRef(new Animated.Value(mode === 'canvas' ? 1 : 0)).current;
+  useEffect(() => {
+    Animated.spring(thumb, { toValue: mode === 'canvas' ? 1 : 0, useNativeDriver: true, speed: 18, bounciness: 10 }).start();
+  }, [mode, thumb]);
+
+  // Confirm button pops when the outfit gets confirmed.
+  const pop = useRef(new Animated.Value(1)).current;
+  const wasConfirmed = useRef(confirmedHere);
+  useEffect(() => {
+    if (confirmedHere && !wasConfirmed.current) {
+      pop.setValue(0.9);
+      Animated.spring(pop, { toValue: 1, useNativeDriver: true, speed: 12, bounciness: 16 }).start();
+    }
+    wasConfirmed.current = confirmedHere;
+  }, [confirmedHere, pop]);
   const primaryTitle = isToday ? (confirmedHere ? 'Đã mặc hôm nay' : 'Mặc hôm nay') : (confirmedHere ? 'Đã chốt' : 'Chốt outfit');
 
   return (
@@ -245,12 +276,15 @@ export default function Today({ profile, items, onOpenTryOn, onGoWardrobe, onIte
               ],
             }]}>
               <View style={st.toggleRow}>
-                <Pressable onPress={() => setMode('body')} accessibilityRole="button" accessibilityLabel="Xem trên người" style={[st.toggle, mode === 'body' && { backgroundColor: C.pink }]}>
-                  <Icon name="person" size={18} color={mode === 'body' ? C.wine : C.sub} />
-                </Pressable>
-                <Pressable onPress={() => setMode('canvas')} accessibilityRole="button" accessibilityLabel="Xem dạng canvas" style={[st.toggle, mode === 'canvas' && { backgroundColor: C.pink }]}>
-                  <Icon name="grid" size={18} color={mode === 'canvas' ? C.wine : C.sub} />
-                </Pressable>
+                <View style={{ flexDirection: 'row', gap: 4 }}>
+                  <Animated.View style={[st.toggle, st.thumb, { transform: [{ translateX: thumb.interpolate({ inputRange: [0, 1], outputRange: [0, 48] }) }] }]} />
+                  <Pressable onPress={() => setMode('body')} accessibilityRole="button" accessibilityState={{ selected: mode === 'body' }} accessibilityLabel="Xem trên người" style={st.toggle}>
+                    <Icon name="person" size={18} color={mode === 'body' ? C.wine : C.sub} />
+                  </Pressable>
+                  <Pressable onPress={() => setMode('canvas')} accessibilityRole="button" accessibilityState={{ selected: mode === 'canvas' }} accessibilityLabel="Xem dạng canvas" style={st.toggle}>
+                    <Icon name="grid" size={18} color={mode === 'canvas' ? C.wine : C.sub} />
+                  </Pressable>
+                </View>
                 {TRYON_READY ? (
                   <Pressable onPress={() => onOpenTryOn(viewed.item_ids)} accessibilityRole="button" accessibilityLabel="Mặc thử AI" style={st.tryon}>
                     <Icon name="spark" size={16} color={C.wine} /><Text style={{ fontSize: 13, fontWeight: '600', color: C.wine }}>Mặc thử AI</Text>
@@ -275,7 +309,7 @@ export default function Today({ profile, items, onOpenTryOn, onGoWardrobe, onIte
             </View>
 
             <Text style={T.h2}>{viewed.name}</Text>
-            {viewed.why ? <Text style={[T.body, { lineHeight: 21 }]}>{viewed.why}</Text> : null}
+            {viewed.why ? <TypeText key={`${idx}|${viewed.why}`} text={viewed.why} /> : null}
             {viewed.fit_note ? (
               <View style={st.fit}>
                 <Text style={{ fontSize: 13, fontWeight: '700', color: C.wine }}>Hợp dáng bạn</Text>
@@ -294,8 +328,10 @@ export default function Today({ profile, items, onOpenTryOn, onGoWardrobe, onIte
             ) : null}
 
             <View style={{ flexDirection: 'row', gap: 10, marginTop: 4 }}>
-              <Button title={primaryTitle} kind={confirmedHere ? 'outline' : 'primary'} icon={confirmedHere ? 'check' : undefined}
-                disabled={confirmedHere || (isToday && worn)} loading={saving} onPress={confirm} style={{ flex: 1 }} />
+              <Animated.View style={{ flex: 1, transform: [{ scale: pop }] }}>
+                <Button title={primaryTitle} kind={confirmedHere ? 'outline' : 'primary'} icon={confirmedHere ? 'check' : undefined}
+                  disabled={confirmedHere || (isToday && worn)} loading={saving} onPress={confirm} />
+              </Animated.View>
               <Button title="Chat" kind="secondary" icon="chat" onPress={() => void openChat()} style={{ flex: 1 }} />
             </View>
             {saveErr ? <ErrorBox message={saveErr} onRetry={confirm} /> : null}
@@ -329,6 +365,7 @@ const st = StyleSheet.create({
   ctxText: { fontSize: 14, fontWeight: '700', color: C.text, marginTop: 1 },
   stage: { backgroundColor: C.pinkSoft, borderRadius: R.card, overflow: 'hidden', paddingBottom: 8 },
   peek: { position: 'absolute', height: 60, borderRadius: R.card },
+  thumb: { position: 'absolute', left: 0, top: 0, backgroundColor: C.pink },
   toggleRow: { flexDirection: 'row', alignItems: 'center', gap: 4, padding: 8 },
   toggle: { width: 44, height: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   tryon: { flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 44, paddingHorizontal: 12, borderRadius: 999, backgroundColor: C.card, marginLeft: 4 },

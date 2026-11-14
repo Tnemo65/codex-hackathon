@@ -1,0 +1,64 @@
+# Builds an UNSIGNED Release .ipa (JS bundle embedded, no Metro needed).
+# Install on iPhone from Windows with Sideloadly + a free Apple ID (app expires after 7 days).
+# Run: GitHub → Actions → "iOS unsigned IPA" → Run workflow → download artifact "tudo-ipa".
+name: iOS unsigned IPA
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: app
+    env:
+      # Public values (already shared in MAC_BUILD.md); inlined into the JS bundle at build time.
+      EXPO_PUBLIC_SUPABASE_URL: https://aivyffaeerowlxmkgxxz.supabase.co
+      EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY: sb_publishable_55grVbKUwrQgFEbPy0NFKA_hE5QlhsP
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - run: npm ci
+
+      - name: Generate ios/
+        run: npx expo prebuild -p ios --clean
+
+      - name: Build Release (unsigned)
+        run: |
+          WS=$(ls -d ios/*.xcworkspace | head -1)
+          SCHEME=$(basename "$WS" .xcworkspace)
+          echo "Workspace: $WS  Scheme: $SCHEME"
+          xcodebuild -workspace "$WS" -scheme "$SCHEME" \
+            -configuration Release -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            | tail -n 200
+          test "${PIPESTATUS[0]}" -eq 0
+
+      - name: Package .ipa
+        run: |
+          APP=$(ls -d build/Build/Products/Release-iphoneos/*.app | head -1)
+          test -f "$APP/main.jsbundle" || { echo "main.jsbundle missing: not a standalone Release build"; exit 1; }
+          mkdir -p Payload
+          cp -R "$APP" Payload/
+          zip -qry tudo-unsigned.ipa Payload
+          ls -lh tudo-unsigned.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tudo-ipa
+          path: app/tudo-unsigned.ipa
+          retention-days: 7

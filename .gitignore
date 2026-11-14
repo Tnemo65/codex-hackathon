@@ -2,6 +2,7 @@
 # Everything else at the top level (idea/, research/, notes, backups) stays local.
 /*
 !/.gitignore
+!/.github/
 !/CLAUDE.md
 !/CONTEXT.md
 !/rule.md

@@ -78,6 +78,51 @@ export async function post<T>(url: string, action: string, payload: Record<strin
 
 const call = <T,>(action: string, payload: Record<string, unknown> = {}, timeoutMs?: number) => post<T>(API_URL, action, payload, timeoutMs);
 
+// Weather comes straight from Open-Meteo on the device (no key needed): the server's shared cloud address
+// gets refused by Open-Meteo, while a phone gets an answer in about a second.
+const PLACES: Record<string, [number, number]> = { 'Hà Nội': [21.0285, 105.8542], 'TP. Hồ Chí Minh': [10.8231, 106.6297], 'Đà Nẵng': [16.0544, 108.2022] };
+const weatherCache = new Map<string, { at: number; data: Weather }>();
+
+export async function fetchWeather(date: string, city = 'Hà Nội'): Promise<Weather> {
+  const place = PLACES[city] ? city : 'Hà Nội';
+  const key = `${place}|${date}`;
+  const hit = weatherCache.get(key);
+  if (hit && Date.now() - hit.at < 20 * 60 * 1000) return hit.data;
+  const [lat, lon] = PLACES[place];
+  const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
+    `&hourly=temperature_2m,precipitation_probability,wind_speed_10m,uv_index&timezone=Asia%2FBangkok&start_date=${date}&end_date=${date}`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    if (!res.ok) throw new Error(`open-meteo ${res.status}`);
+    const h = (await res.json()).hourly as Record<string, number[]>;
+    const part = (from: number, to: number) => {
+      const idx = Array.from({ length: to - from + 1 }, (_, i) => from + i);
+      const t = Math.round(idx.reduce((s, i) => s + (h.temperature_2m[i] ?? 0), 0) / idx.length);
+      const rain = Math.max(...idx.map((i) => h.precipitation_probability[i] ?? 0));
+      const wind = Math.round(Math.max(...idx.map((i) => h.wind_speed_10m[i] ?? 0)));
+      const uv = Math.max(...idx.map((i) => h.uv_index[i] ?? 0));
+      const cond = rain >= 60 ? 'Mưa' : rain >= 35 ? 'Có thể mưa' : t <= 17 ? 'Trời lạnh' : uv >= 7 ? 'Nắng gắt' : uv >= 3 ? 'Nắng nhẹ' : t <= 22 ? 'Trời mát' : 'Trời dịu';
+      return { t, cond, rain_pct: Math.round(rain), wind_kmh: wind };
+    };
+    const day = h.temperature_2m.slice(6, 23);
+    const morning = part(6, 11), afternoon = part(12, 17), evening = part(18, 22);
+    const data: Weather = {
+      place, date, morning, afternoon, evening,
+      t_min: Math.round(Math.min(...day)), t_max: Math.round(Math.max(...day)),
+      uv_max: Math.round(Math.max(...h.uv_index.slice(6, 19))),
+      summary: `Sáng ${morning.t}° · ${morning.cond}`,
+    };
+    weatherCache.set(key, { at: Date.now(), data });
+    return data;
+  } catch {
+    throw new Error('Chưa lấy được thời tiết, thử lại nhé.');
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export const api = {
   profileGet: () => call<{ profile: Profile | null; restore_code: string | null }>('profile.get'),
   profileSave: (profile: Profile) => call<{ profile: Profile; restore_code: string }>('profile.save', { profile }),
@@ -90,11 +135,14 @@ export const api = {
   itemUpdate: (id: string, patch: Partial<Item>) => call<{ item: Item }>('item.update', { id, patch }),
   itemDelete: (id: string) => call<{ ok: true }>('item.delete', { id }),
 
-  weatherGet: (date: string) => call<{ weather: Weather }>('weather.get', { date }),
+  weatherGet: async (date: string) => ({ weather: await fetchWeather(date) }),
   planGet: (date: string) => call<{ plan: Plan | null }>('plan.get', { date }),
   // AI picks 3 outfits from the wardrobe; the first becomes plan.outfit with status "suggested".
-  outfitSuggest: (date: string, occasion: string, commute: Commute) =>
-    call<{ plan: Plan }>('outfit.suggest', { date, occasion, commute }, 90000),
+  // The device fetches the forecast and sends it along; without it the AI still suggests, just without weather.
+  outfitSuggest: async (date: string, occasion: string, commute: Commute) => {
+    const weather = await fetchWeather(date).catch(() => null);
+    return call<{ plan: Plan }>('outfit.suggest', { date, occasion, commute, weather }, 90000);
+  },
   // AI edits the currently selected outfit of that date by a Vietnamese instruction.
   outfitEdit: (date: string, text: string) => call<{ plan: Plan; message: string }>('outfit.edit', { date, text }, 60000),
   planSet: (date: string, status: PlanStatus, outfit?: Outfit) => call<{ plan: Plan }>('plan.set', { date, status, outfit }),

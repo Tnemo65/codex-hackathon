@@ -303,7 +303,7 @@ function describeUser(p: Row | null): string {
     `cao ${p.height_cm} cm, nặng ${p.weight_kg} kg, tỷ lệ ${PROPORTION[p.proportion] ?? "cân đối"}; thích phom ${p.fit_pref}; style: ${(p.styles ?? []).join(", ") || "chưa chọn"}.`;
 }
 function describeWeather(w: Row | null): string {
-  if (!w) return "Chưa lấy được dự báo thời tiết.";
+  if (!w) return "Không có dữ liệu thời tiết (đừng nhắc tới thời tiết trong lời dặn).";
   const f = (n: string, x: Row) => `${n} ${x.t}°C, ${x.cond}, mưa ${x.rain_pct}%, gió ${x.wind_kmh} km/h`;
   return `${w.place} ngày ${w.date}: ${f("sáng", w.morning)}; ${f("chiều", w.afternoon)}; ${f("tối", w.evening)}; UV cao nhất ${w.uv_max}.`;
 }
@@ -428,9 +428,8 @@ async function route(action: string, device: string, body: any): Promise<unknown
     case "weather.get": {
       const date = checkDate(body.date);
       const [prof] = await sql`select data from profiles where device_id = ${device}`;
-      const weather = await getWeather(prof?.data?.city ?? "Hà Nội", date).catch(() => {
-        throw new HttpError(502, "Chưa lấy được thời tiết, thử lại nhé.");
-      });
+      const weather = await weatherOrNull(prof?.data?.city ?? "Hà Nội", date);
+      if (!weather) throw new HttpError(502, "Chưa lấy được thời tiết, thử lại nhé.");
       return { weather };
     }
     case "plan.get": {
@@ -459,8 +458,12 @@ async function route(action: string, device: string, body: any): Promise<unknown
       const kinds = new Set(items.map((i) => i.kind));
       if (items.length < 3 || !(kinds.has("dress") || (kinds.has("top") && kinds.has("bottom"))))
         throw new HttpError(409, "Tủ đồ chưa đủ để phối. Thêm ít nhất một áo và một quần nhé.");
+      // The app sends the forecast it fetched itself (Open-Meteo refuses this server's shared address).
+      const w = body.weather;
+      const sent = w && typeof w === "object" && w.date === date && typeof w.morning?.t === "number" && typeof w.afternoon?.t === "number" &&
+        typeof w.evening?.t === "number" && JSON.stringify(w).length < 1500 ? w : null;
       const [weather, worn] = await Promise.all([
-        weatherOrNull(profile?.city ?? "Hà Nội", date),
+        sent ?? null,
         sql`select outfit from plans where device_id = ${device} and status = 'worn' and date < ${date} and date >= ${date}::date - 7`,
       ]);
       const { toShort, toLong, list } = shortIds(items);
