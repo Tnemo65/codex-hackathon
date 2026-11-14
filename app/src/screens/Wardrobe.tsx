@@ -38,6 +38,7 @@ export default function Wardrobe({ items, loading, removeBg, onReload, autoAdd, 
   const [tab, setTab] = useState<'mine' | 'shop'>('mine');
   const [query, setQuery] = useState('');
   const { width } = useWindowDimensions();
+  const [gridW, setGridW] = useState(0);
   const [sheet, setSheet] = useState(false);
   const [busy, setBusy] = useState<{ uri: string; mode: 'detect' | 'split'; note?: string } | null>(null); // photo AI is reading
   const [scan, setScan] = useState<{ photo: Photo; detections: Detection[]; picked: boolean[] } | null>(null); // 2+ pieces waiting for confirm
@@ -226,7 +227,8 @@ export default function Wardrobe({ items, loading, removeBg, onReload, autoAdd, 
   const q = query.trim().toLowerCase();
   const shown = items.filter((i) => (filter === 'all' || kinds.includes(i.kind))
     && (!q || [i.name, i.category, i.color_name].some((v) => v?.toLowerCase().includes(q))));
-  const tile = Math.floor((Math.min(width, 520) - S.page * 2 - 2 * GRID_GAP) / 3);
+  // Measured grid width (a web scrollbar or safe-area makes it narrower than the window), so 3 tiles always fit and fill the row.
+  const tile = Math.floor(((gridW || Math.min(width, 520) - S.page * 2) - 2 * GRID_GAP) / 3);
 
   return (
     <>
@@ -270,7 +272,7 @@ export default function Wardrobe({ items, loading, removeBg, onReload, autoAdd, 
               </Card>
             ) : null}
             {shown.length ? (
-              <View key={filter + q} style={{ flexDirection: 'row', flexWrap: 'wrap', gap: GRID_GAP }}>
+              <View key={filter + q} onLayout={(e) => setGridW(e.nativeEvent.layout.width)} style={{ flexDirection: 'row', flexWrap: 'wrap', gap: GRID_GAP }}>
                 {shown.map((it, idx) => (
                   <Rise key={it.id} delay={Math.min(idx, 10) * 60}>
                     <Pressable onPress={() => setReview({ item: it, isNew: false })} accessibilityRole="button" accessibilityLabel={it.name}

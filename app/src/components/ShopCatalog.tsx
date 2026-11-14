@@ -30,7 +30,9 @@ export function ShopCatalog({ items, onOpenStudio }: { items: Item[]; onOpenStud
   const [filter, setFilter] = useState<Filter>('all');
   const [open, setOpen] = useState<Product | null>(null);
   const { width } = useWindowDimensions();
-  const tile = Math.floor((Math.min(width, 520) - S.page * 2 - 2 * GRID_GAP) / 3);
+  // Measured grid width (scrollbar / safe-area can make it narrower than the window), so 3 tiles always fit.
+  const [gridW, setGridW] = useState(0);
+  const tile = Math.floor(((gridW || Math.min(width, 520) - S.page * 2) - 2 * GRID_GAP) / 3);
 
   const load = useCallback((force: boolean) => {
     setError(null);
@@ -66,7 +68,7 @@ export function ShopCatalog({ items, onOpenStudio }: { items: Item[]; onOpenStud
   const rest = products.filter((p) => !why.has(p.id) && (filter === 'all' || kinds.includes(p.kind)));
 
   const grid = (list: Product[]) => (
-    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: GRID_GAP }}>
+    <View onLayout={(e) => setGridW(e.nativeEvent.layout.width)} style={{ flexDirection: 'row', flexWrap: 'wrap', gap: GRID_GAP }}>
       {list.map((p) => (
         <Pressable key={p.id} onPress={() => setOpen(p)} accessibilityRole="button" accessibilityLabel={`${p.name}, ${money(p.price)}`}
           style={{ width: tile, backgroundColor: C.pinkSoft, borderRadius: 16, padding: 8, gap: 4 }}>
