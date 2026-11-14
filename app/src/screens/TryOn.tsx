@@ -3,6 +3,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Animated, Easing, Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { post } from '../api';
+import { useReduceMotion } from '../motion';
 import { pickPhoto, takePhoto, type Photo } from '../photo';
 import { C, R, T } from '../theme';
 import { PROPORTION_LABEL, type Item, type Profile } from '../types';
@@ -299,11 +300,13 @@ function RefineFrame({ elapsed, uris }: { elapsed: number; uris: string[] }) {
   const stage = STAGES.filter(([s]) => elapsed >= s).length - 1;
   const [h, setH] = useState(0);
   const scan = useRef(new Animated.Value(0)).current;
+  const reduce = useReduceMotion();
   useEffect(() => {
+    if (reduce) return;
     const loop = Animated.loop(Animated.timing(scan, { toValue: 1, duration: 2200, easing: Easing.inOut(Easing.quad), useNativeDriver: true }));
     loop.start();
     return () => loop.stop();
-  }, [scan]);
+  }, [scan, reduce]);
   const blur = [0, 8, 3, 0][stage];
   return (
     <View style={{ gap: 10 }}>
@@ -316,7 +319,7 @@ function RefineFrame({ elapsed, uris }: { elapsed: number; uris: string[] }) {
             ))}
           </View>
         ) : null}
-        {h ? (
+        {h && !reduce ? (
           <Animated.View pointerEvents="none" style={[st.scan, { transform: [{ translateY: scan.interpolate({ inputRange: [0, 1], outputRange: [0, h - 2] }) }] }]} />
         ) : null}
         <View style={st.badge}><Badge text={`${elapsed} giây`} /></View>
@@ -336,9 +339,10 @@ function RefineFrame({ elapsed, uris }: { elapsed: number; uris: string[] }) {
 // Result photo fades in once loaded instead of popping.
 function FadeImage({ uri }: { uri: string }) {
   const a = useRef(new Animated.Value(0)).current;
+  const reduce = useReduceMotion();
   return (
     <Animated.Image source={{ uri }} style={[st.photo, { opacity: a }]} resizeMode="contain" accessibilityLabel="Ảnh phối do AI minh hoạ"
-      onLoad={() => Animated.timing(a, { toValue: 1, duration: 600, useNativeDriver: true }).start()} />
+      onLoad={() => (reduce ? a.setValue(1) : Animated.timing(a, { toValue: 1, duration: 600, useNativeDriver: true }).start())} />
   );
 }
 

@@ -2,6 +2,7 @@
 import React from 'react';
 import { ActivityIndicator, Animated, Easing, Modal, Platform, Pressable, ScrollView, StatusBar, StyleSheet, Text, View, type ViewStyle } from 'react-native';
 import Svg, { Circle, Path } from 'react-native-svg';
+import { useReduceMotion } from './motion';
 import { C, R, S, T } from './theme';
 
 // Fixed insets (no safe-area module is installed): clear the Dynamic Island / notch and the home indicator on iPhone.
@@ -142,14 +143,16 @@ export function Sheet({ visible, onClose, title, subtitle, children }: { visible
 // Skeleton placeholder: pulsing blocks shaped like the content, so a wait never looks frozen.
 export function Loading({ text }: { text: string }) {
   const pulse = React.useRef(new Animated.Value(0.45)).current;
+  const reduce = useReduceMotion();
   React.useEffect(() => {
+    if (reduce) { pulse.setValue(1); return; }
     const loop = Animated.loop(Animated.sequence([
       Animated.timing(pulse, { toValue: 1, duration: 650, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
       Animated.timing(pulse, { toValue: 0.45, duration: 650, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
     ]));
     loop.start();
     return () => loop.stop();
-  }, [pulse]);
+  }, [pulse, reduce]);
   const bar = (w: number | `${number}%`, h: number) => <View style={{ width: w, height: h, borderRadius: 10, backgroundColor: C.pink }} />;
   return (
     <View style={{ gap: 12, paddingVertical: 8 }} accessibilityLiveRegion="polite" accessibilityLabel={text}>

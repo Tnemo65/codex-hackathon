@@ -3,7 +3,10 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, Image, Pressable, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { api } from '../api';
 import { ShopCatalog } from '../components/ShopCatalog';
+import { StatusMark } from '../components/StatusMark';
 import { ThoughtLine } from '../components/ThoughtLine';
+import { UndoToast } from '../components/UndoToast';
+import { useReduceMotion } from '../motion';
 import { pickPhoto, takePhoto, type Photo } from '../photo';
 import { C, R, S, T } from '../theme';
 import { type Detection, type Item, type Kind } from '../types';
@@ -22,14 +25,38 @@ const KIND_LABEL: Record<Kind, string> = { top: 'Áo', bottom: 'Quần / váy', 
 
 // Tile fades and slides up once, staggered by `delay`.
 function Rise({ delay, children }: { delay: number; children: React.ReactNode }) {
-  const a = useRef(new Animated.Value(0)).current;
+  const reduce = useReduceMotion();
+  const a = useRef(new Animated.Value(reduce ? 1 : 0)).current;
   useEffect(() => {
+    if (reduce) { a.setValue(1); return; }
     Animated.timing(a, { toValue: 1, duration: 420, delay, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
-  }, [a, delay]);
+  }, [a, delay, reduce]);
   return (
     <Animated.View style={{ opacity: a, transform: [{ translateY: a.interpolate({ inputRange: [0, 1], outputRange: [18, 0] }) }] }}>
       {children}
     </Animated.View>
+  );
+}
+
+type Piece = { id: string; name: string; state: 'running' | 'done' | 'failed'; start: number };
+
+// One row on the waiting screen: status mark, name and seconds spent (frozen once finished).
+function PieceRow({ piece }: { piece: Piece }) {
+  const [now, setNow] = useState(Date.now());
+  const frozen = useRef<number | null>(null);
+  useEffect(() => {
+    if (piece.state !== 'running') return;
+    const iv = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(iv);
+  }, [piece.state]);
+  if (piece.state !== 'running' && frozen.current === null) frozen.current = Date.now();
+  const secs = Math.max(0, Math.round(((piece.state === 'running' ? now : frozen.current ?? now) - piece.start) / 1000));
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 36 }}>
+      <StatusMark state={piece.state} />
+      <Text numberOfLines={1} style={{ flex: 1, fontSize: 14, fontWeight: '600', color: C.text }}>{piece.name}</Text>
+      <Text style={T.sub}>{`${secs}s`}</Text>
+    </View>
   );
 }
 
@@ -46,6 +73,9 @@ export default function Wardrobe({ items, loading, removeBg, onReload, autoAdd, 
   const [multiWait, setMultiWait] = useState<string[]>([]); // ids of items added from one photo still waiting for their cut-out
   const [error, setError] = useState<string | null>(null);
   const [review, setReview] = useState<{ item: Item; isNew: boolean } | null>(null);
+  const [pieces, setPieces] = useState<Piece[]>([]); // per-item cut-out progress on the multi-item waiting screen
+  const [pendingDelete, setPendingDelete] = useState<{ id: string; name: string } | null>(null); // hidden from the grid, deleted when the undo fuse ends
+  const pendingRef = useRef<{ id: string; name: string } | null>(null);
   const [cut, setCut] = useState<{ id: string; url: string | null } | null>(null); // new item and its cut-out once ready
 
   // The server cuts the background out after it has answered (about 10 s), so ask again until the cut-out is there.
@@ -120,6 +150,23 @@ export default function Wardrobe({ items, loading, removeBg, onReload, autoAdd, 
 
   const back = () => setReview(null);
 
+  // Really delete the item whose undo window ended; on failure show it again with the error.
+  const commitDelete = (p: { id: string; name: string }) => {
+    if (pendingRef.current?.id === p.id) pendingRef.current = null;
+    api.itemDelete(p.id)
+      .then(() => onReload())
+      .catch((e) => { setError(e instanceof Error ? e.message : 'Không xoá được món đồ.'); })
+      .finally(() => setPendingDelete((cur) => (cur?.id === p.id ? null : cur)));
+  };
+  const startDelete = (item: Item) => {
+    if (pendingRef.current) commitDelete(pendingRef.current);
+    const p = { id: item.id, name: item.name };
+    pendingRef.current = p;
+    setPendingDelete(p);
+    back();
+  };
+  useEffect(() => () => { if (pendingRef.current) { const p = pendingRef.current; pendingRef.current = null; api.itemDelete(p.id).catch(() => {}); } }, []);
+
   const addPicked = async () => {
     if (!scan) return;
     const { photo, detections, picked } = scan;
@@ -131,11 +178,18 @@ export default function Wardrobe({ items, loading, removeBg, onReload, autoAdd, 
       // instead of saying "added" and then making the user wait again.
       let pending = removeBg ? created.filter((i) => !i.cutout_url).map((i) => i.id) : [];
       const total = pending.length;
+      const t0 = Date.now();
+      setPieces(created.map((i) => ({ id: i.id, name: i.name, state: pending.includes(i.id) ? 'running' : 'done', start: t0 })));
       for (let tries = 0; pending.length && tries < 15; tries++) {
         setBusy({ uri: photo.uri, mode: 'split', note: `Đã tách nền ${total - pending.length}/${total} món` });
         await new Promise((r) => setTimeout(r, 3000));
         const list = await api.itemsList().then((r) => r.items).catch(() => null);
         if (list) pending = pending.filter((id) => !list.find((i) => i.id === id)?.cutout_url);
+        setPieces((ps) => ps.map((p) => (p.state === 'running' && !pending.includes(p.id) ? { ...p, state: 'done' } : p)));
+      }
+      if (pending.length) {
+        setPieces((ps) => ps.map((p) => (pending.includes(p.id) ? { ...p, state: 'failed' } : p)));
+        await new Promise((r) => setTimeout(r, 1200));
       }
       await onReload().catch(() => {});
       setScan(null);
@@ -145,6 +199,7 @@ export default function Wardrobe({ items, loading, removeBg, onReload, autoAdd, 
       setError(e instanceof Error ? e.message : 'Có lỗi xảy ra.');
     } finally {
       setBusy(null);
+      setPieces([]);
     }
   };
 
@@ -158,7 +213,7 @@ export default function Wardrobe({ items, loading, removeBg, onReload, autoAdd, 
         cutting={cut?.id === item.id && !cut.url}
         onBack={back}
         onSave={async (patch) => { await api.itemUpdate(item.id, patch); await onReload(); back(); }}
-        onDelete={async () => { await api.itemDelete(item.id); await onReload(); back(); }}
+        onDelete={async () => { startDelete(item); }}
       />
     );
   }
@@ -175,6 +230,11 @@ export default function Wardrobe({ items, loading, removeBg, onReload, autoAdd, 
           <>
             <ThoughtLine title="AI đang tách từng món" steps={['Lưu ảnh gốc', 'Tách từng món khỏi ảnh', 'Lưu vào tủ đồ', 'Tách nền từng món']} />
             {busy.note ? <Text style={[T.sub, { textAlign: 'center' }]}>{busy.note}</Text> : null}
+            {pieces.length ? (
+              <Card style={{ gap: 2, paddingVertical: 8 }}>
+                {pieces.map((p) => <PieceRow key={p.id} piece={p} />)}
+              </Card>
+            ) : null}
           </>
         ) : (
           <ThoughtLine title="AI đang nhận diện" steps={[
@@ -225,7 +285,7 @@ export default function Wardrobe({ items, loading, removeBg, onReload, autoAdd, 
 
   const kinds = FILTERS.find((f) => f.key === filter)!.kinds;
   const q = query.trim().toLowerCase();
-  const shown = items.filter((i) => (filter === 'all' || kinds.includes(i.kind))
+  const shown = items.filter((i) => i.id !== pendingDelete?.id && (filter === 'all' || kinds.includes(i.kind))
     && (!q || [i.name, i.category, i.color_name].some((v) => v?.toLowerCase().includes(q))));
   // Measured grid width (a web scrollbar or safe-area makes it narrower than the window), so 3 tiles always fit and fill the row.
   const tile = Math.floor(((gridW || Math.min(width, 520) - S.page * 2) - 2 * GRID_GAP) / 3);
@@ -287,6 +347,9 @@ export default function Wardrobe({ items, loading, removeBg, onReload, autoAdd, 
           </>
         )}
       </Screen>
+      {pendingDelete && tab === 'mine' ? (
+        <UndoToast key={pendingDelete.id} text={`Đã xoá ${pendingDelete.name}`} onUndo={() => { pendingRef.current = null; setPendingDelete(null); }} onDone={() => commitDelete(pendingDelete)} />
+      ) : null}
       <Sheet visible={sheet} onClose={() => setSheet(false)} title="Thêm món đồ" subtitle="Đặt đồ trên nền trơn, đủ sáng để nhận diện dễ hơn.">
         <Button title="Chụp ảnh" icon="camera" onPress={() => add(takePhoto)} />
         <Button title="Chọn từ thư viện" icon="image" kind="outline" onPress={() => add(pickPhoto)} />

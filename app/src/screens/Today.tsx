@@ -6,6 +6,7 @@ import { ChatSheet } from '../components/ChatSheet';
 import { OutfitCanvas } from '../components/OutfitCanvas';
 import { OutfitPhoto } from '../components/OutfitPhoto';
 import { ThoughtLine, secs } from '../components/ThoughtLine';
+import { useReduceMotion } from '../motion';
 import { C, R, S, T } from '../theme';
 import { COMMUTE_LABEL, OCCASIONS, type Commute, type Item, type Outfit, type Plan, type Profile, type Weather } from '../types';
 import { Banner, Button, Card, Chip, ErrorBox, Icon, Loading, Sheet, TOP_INSET } from '../ui';
@@ -20,14 +21,17 @@ const doneText = (p: Plan, t0: number) => `Đã phối ${Math.max(1, p.options?.
 
 // AI explanation types itself out; the rest is laid out transparent so the page does not jump.
 function TypeText({ text }: { text: string }) {
+  const reduce = useReduceMotion();
   const [n, setN] = useState(0);
   useEffect(() => {
+    if (reduce) return;
     const iv = setInterval(() => setN((x) => { if (x >= text.length) { clearInterval(iv); return x; } return x + 3; }), 16);
     return () => clearInterval(iv);
-  }, [text]);
+  }, [text, reduce]);
+  const shown = reduce ? text.length : n;
   return (
     <Text style={[T.body, { lineHeight: 21 }]} accessibilityLabel={text}>
-      {text.slice(0, n)}<Text style={{ color: 'transparent' }}>{text.slice(n)}</Text>
+      {text.slice(0, shown)}<Text style={{ color: 'transparent' }}>{text.slice(shown)}</Text>
     </Text>
   );
 }
@@ -171,8 +175,9 @@ export default function Today({ profile, items, onOpenTryOn, onGoWardrobe, onIte
 
   // Swipe the outfit card like a deck: past the threshold it flies out and the next option springs forward.
   const canSwipe = list.length > 1 && !(isToday && worn);
-  const live = useRef({ canSwipe, go, boxW });
-  live.current = { canSwipe, go, boxW };
+  const reduce = useReduceMotion();
+  const live = useRef({ canSwipe, go, boxW, reduce });
+  live.current = { canSwipe, go, boxW, reduce };
   const pan = useRef(new Animated.Value(0)).current;
   const enter = useRef(new Animated.Value(1)).current;
   const swipe = useRef(PanResponder.create({
@@ -182,16 +187,20 @@ export default function Today({ profile, items, onOpenTryOn, onGoWardrobe, onIte
     onPanResponderRelease: (_, g) => {
       if (Math.abs(g.dx) > 80 || Math.abs(g.vx) > 0.6) {
         const dir = g.dx < 0 ? -1 : 1;
+        if (live.current.reduce) { pan.setValue(0); live.current.go(dir < 0 ? 1 : -1); return; }
         Animated.timing(pan, { toValue: dir * (live.current.boxW + 80), duration: 180, useNativeDriver: true })
           .start(() => live.current.go(dir < 0 ? 1 : -1));
+      } else if (live.current.reduce) {
+        pan.setValue(0);
       } else {
         Animated.spring(pan, { toValue: 0, useNativeDriver: true, bounciness: 8 }).start();
       }
     },
-    onPanResponderTerminate: () => Animated.spring(pan, { toValue: 0, useNativeDriver: true }).start(),
+    onPanResponderTerminate: () => (live.current.reduce ? pan.setValue(0) : Animated.spring(pan, { toValue: 0, useNativeDriver: true }).start()),
   })).current;
   useEffect(() => {
     pan.setValue(0);
+    if (reduce) { enter.setValue(1); return; }
     enter.setValue(0);
     Animated.spring(enter, { toValue: 1, useNativeDriver: true, speed: 14, bounciness: 7 }).start();
   }, [idx]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -199,19 +208,20 @@ export default function Today({ profile, items, onOpenTryOn, onGoWardrobe, onIte
   // Body/canvas toggle: a pink thumb springs between the two buttons.
   const thumb = useRef(new Animated.Value(mode === 'canvas' ? 1 : 0)).current;
   useEffect(() => {
+    if (reduce) { thumb.setValue(mode === 'canvas' ? 1 : 0); return; }
     Animated.spring(thumb, { toValue: mode === 'canvas' ? 1 : 0, useNativeDriver: true, speed: 18, bounciness: 10 }).start();
-  }, [mode, thumb]);
+  }, [mode, thumb, reduce]);
 
   // Confirm button pops when the outfit gets confirmed.
   const pop = useRef(new Animated.Value(1)).current;
   const wasConfirmed = useRef(confirmedHere);
   useEffect(() => {
-    if (confirmedHere && !wasConfirmed.current) {
+    if (confirmedHere && !wasConfirmed.current && !reduce) {
       pop.setValue(0.9);
       Animated.spring(pop, { toValue: 1, useNativeDriver: true, speed: 12, bounciness: 16 }).start();
     }
     wasConfirmed.current = confirmedHere;
-  }, [confirmedHere, pop]);
+  }, [confirmedHere, pop, reduce]);
   const primaryTitle = isToday ? (confirmedHere ? 'Đã mặc hôm nay' : 'Mặc hôm nay') : (confirmedHere ? 'Đã chốt' : 'Chốt outfit');
 
   return (

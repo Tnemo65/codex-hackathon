@@ -6,6 +6,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, Pressable, Text, View } from 'react-native';
 import { tryonApi } from '../api';
 import { PANEL } from '../body';
+import { useReduceMotion } from '../motion';
 import { C } from '../theme';
 import type { Item, Profile } from '../types';
 import { OutfitOnBody } from './OutfitOnBody';
@@ -37,6 +38,7 @@ export function OutfitPhoto({ items, profile, width, height, auto = true }: { it
   const fade = useRef(new Animated.Value(0)).current;
   const scan = useRef(new Animated.Value(0)).current;
   const areaW = width * PANEL.areaFrac;
+  const reduce = useReduceMotion();
 
   async function run(k: string, fresh: boolean, asked = false) {
     live.current = k;
@@ -72,11 +74,11 @@ export function OutfitPhoto({ items, profile, width, height, auto = true }: { it
   useEffect(() => { void run(key, false); return () => { live.current = ''; }; }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (phase !== 'pending') return;
+    if (phase !== 'pending' || reduce) return;
     const loop = Animated.loop(Animated.timing(scan, { toValue: 1, duration: 2000, easing: Easing.inOut(Easing.quad), useNativeDriver: true }));
     loop.start();
     return () => loop.stop();
-  }, [phase, scan]);
+  }, [phase, scan, reduce]);
 
   return (
     <View style={{ width, height }}>
@@ -84,8 +86,8 @@ export function OutfitPhoto({ items, profile, width, height, auto = true }: { it
 
       {phase === 'pending' ? (
         <>
-          <Animated.View pointerEvents="none" style={{ position: 'absolute', left: 0, top: 0, width: areaW, height: 2, backgroundColor: C.wine, opacity: 0.35,
-            transform: [{ translateY: scan.interpolate({ inputRange: [0, 1], outputRange: [0, height - 2] }) }] }} />
+          {reduce ? null : <Animated.View pointerEvents="none" style={{ position: 'absolute', left: 0, top: 0, width: areaW, height: 2, backgroundColor: C.wine, opacity: 0.35,
+            transform: [{ translateY: scan.interpolate({ inputRange: [0, 1], outputRange: [0, height - 2] }) }] }} />}
           <View style={{ position: 'absolute', left: 10, top: 10, backgroundColor: C.card, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4 }}>
             <Text style={{ fontSize: 11, fontWeight: '700', color: C.wine }}>AI đang mặc thử…</Text>
           </View>
@@ -94,7 +96,7 @@ export function OutfitPhoto({ items, profile, width, height, auto = true }: { it
 
       {url ? (
         <Animated.Image source={{ uri: url }} resizeMode="cover" accessibilityLabel="Ảnh người mẫu mặc bộ đồ này"
-          onLoad={() => Animated.timing(fade, { toValue: 1, duration: 500, useNativeDriver: true }).start()}
+          onLoad={() => (reduce ? fade.setValue(1) : Animated.timing(fade, { toValue: 1, duration: 500, useNativeDriver: true }).start())}
           style={{ position: 'absolute', left: 0, top: 0, width: areaW, height, borderTopLeftRadius: 20, borderBottomLeftRadius: 20, opacity: fade }} />
       ) : null}
 

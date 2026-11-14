@@ -4,6 +4,7 @@ import { Switch, Text, TextInput, View } from 'react-native';
 import { C, T } from '../theme';
 import { COMMUTE_LABEL, FIT_LABEL, JOBS, OCCASIONS, PROPORTION_LABEL, STYLES_F, STYLES_M, type Commute, type DressCode, type FitPref, type Profile, type Proportion, type Wear } from '../types';
 import { Button, Card, Chip, Screen } from '../ui';
+import { CodeSlots } from '../components/CodeSlots';
 
 const WEAR: [Wear, string][] = [['f', 'Đồ nữ'], ['m', 'Đồ nam'], ['u', 'Cả hai']];
 const DRESS: [DressCode, string][] = [['dong_phuc', 'Có đồng phục'], ['lich_su', 'Lịch sự'], ['thoai_mai', 'Thoải mái']];
@@ -96,7 +97,7 @@ export default function ProfileScreen({ profile, restoreCode, removeBg, onToggle
         <Text style={T.h2}>Mã khôi phục</Text>
         <Text selectable style={{ fontSize: 28, fontWeight: '800', letterSpacing: 3, color: C.wine }}>{restoreCode ?? '—'}</Text>
         <Text style={T.sub}>Dùng mã này để mở lại tủ đồ trên máy khác.</Text>
-        <TextInput value={code} onChangeText={setCode} placeholder="Nhập mã khôi phục" placeholderTextColor={C.sub} autoCapitalize="characters" autoCorrect={false} style={input} accessibilityLabel="Nhập mã khôi phục" />
+        <CodeSlots value={code} onChange={(v) => { setRError(null); setCode(v); }} invalid={!!rError} />
         {rError ? <Text style={{ color: C.danger, fontSize: 13 }}>{rError}</Text> : null}
         <Button title="Khôi phục" kind="secondary" onPress={restore} loading={rBusy} />
       </Card>

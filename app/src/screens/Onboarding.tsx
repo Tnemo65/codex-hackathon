@@ -8,6 +8,7 @@ import {
   type Commute, type DressCode, type FitPref, type Profile, type Proportion, type Wear,
 } from '../types';
 import { BOTTOM_INSET, Button, Card, Chip, Icon, TOP_INSET } from '../ui';
+import { CodeSlots } from '../components/CodeSlots';
 
 type Next = 'add_camera' | 'add_library' | 'home';
 const WEARS: [Wear, string][] = [['f', 'Đồ nữ'], ['m', 'Đồ nam'], ['u', 'Cả hai']];
@@ -157,8 +158,7 @@ export default function Onboarding({ initial, onDone, onRestore }: {
             </Pressable>
             {restoreOpen ? (
               <View style={{ gap: 8 }}>
-                <TextInput value={code} onChangeText={setCode} placeholder="Nhập mã khôi phục" placeholderTextColor={C.sub} autoCapitalize="none" autoCorrect={false}
-                  accessibilityLabel="Mã khôi phục" style={inputBox} />
+                <CodeSlots value={code} onChange={setCode} invalid={!!restoreErr} />
                 {restoreErr ? <Text style={{ fontSize: 13, color: C.danger }}>{restoreErr}</Text> : null}
                 <Button title="Khôi phục" kind="secondary" onPress={restore} loading={restoring} disabled={!code.trim()} />
               </View>

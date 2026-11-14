@@ -2,6 +2,7 @@
 // When `done` is set it folds into one line ("Đã phối 3 bộ trong 6,2s").
 import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Animated, Easing, Text, View } from 'react-native';
+import { useReduceMotion } from '../motion';
 import { C } from '../theme';
 import { Icon } from '../ui';
 
@@ -16,14 +17,16 @@ export function ThoughtLine({ title, steps, done }: { title: string; steps: stri
   const t0 = useRef(Date.now());
   const [now, setNow] = useState(Date.now());
   const wave = useRef(new Animated.Value(0)).current;
+  const reduce = useReduceMotion();
 
   useEffect(() => {
     if (done) return;
     const iv = setInterval(() => setNow(Date.now()), 100);
+    if (reduce) { wave.setValue(0); return () => clearInterval(iv); }
     const loop = Animated.loop(Animated.timing(wave, { toValue: 1, duration: 1400, easing: Easing.linear, useNativeDriver: true }));
     loop.start();
     return () => { clearInterval(iv); loop.stop(); };
-  }, [done, wave]);
+  }, [done, wave, reduce]);
 
   if (done) {
     return (
@@ -60,7 +63,11 @@ export function ThoughtLine({ title, steps, done }: { title: string; steps: stri
 
 function Step({ text, ok }: { text: string; ok: boolean }) {
   const a = useRef(new Animated.Value(0)).current;
-  useEffect(() => { Animated.timing(a, { toValue: 1, duration: 350, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start(); }, [a]);
+  const reduce = useReduceMotion();
+  useEffect(() => {
+    if (reduce) { a.setValue(1); return; }
+    Animated.timing(a, { toValue: 1, duration: 350, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
+  }, [a, reduce]);
   return (
     <Animated.View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8, opacity: a, transform: [{ translateY: a.interpolate({ inputRange: [0, 1], outputRange: [6, 0] }) }] }}>
       <Dot state={ok ? 'ok' : 'run'} />
