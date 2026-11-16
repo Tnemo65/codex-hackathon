@@ -2,7 +2,7 @@
 // Talks only to the separate `tryon` Edge Function (background job + polling).
 import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Animated, Easing, Image, Pressable, StyleSheet, Text, View } from 'react-native';
-import { post } from '../api';
+import { getDeviceId, post } from '../api';
 import { useReduceMotion } from '../motion';
 import { pickPhoto, takePhoto, type Photo } from '../photo';
 import { C, R, T } from '../theme';
@@ -20,14 +20,29 @@ const MAX_WAIT_MS = 180000;
 type Step = 'setup' | 'check' | 'pick' | 'generating' | 'result' | 'failed';
 type StatusRes = { status: 'pending' | 'done' | 'failed'; image_url: string | null; error: string | null };
 
-// Session memory: consent given, and whether the server already holds this user's body photo.
-let consentGiven = false;
-let bodyOnServer = false;
+// Keep consent and uploaded body-photo state scoped to the active profile's server device id.
+// Restoring another profile changes that id, so it must not inherit the previous user's state.
+const consentedDeviceIds = new Set<string>();
+const bodyPhotoDeviceIds = new Set<string>();
+const bodyPhotoRevisions = new Map<string, number>();
+const pendingTryOnJobs = new Map<string, string>();
+const tryOnCreateRequests = new Map<string, Promise<string>>();
+
+function createTryOnJob(key: string, payload: Record<string, unknown>): Promise<string> {
+  const existing = tryOnCreateRequests.get(key);
+  if (existing) return existing;
+  const request = post<{ job_id: string }>(TRYON_URL, 'tryon.create', payload, 90000).then(({ job_id }) => job_id);
+  tryOnCreateRequests.set(key, request);
+  const clear = () => { if (tryOnCreateRequests.get(key) === request) tryOnCreateRequests.delete(key); };
+  void request.then(clear, clear);
+  return request;
+}
 
 export default function TryOn({ items, profile, initialItemIds, onBack, onUseToday }: { items: Item[]; profile: Profile; initialItemIds: string[]; onBack: () => void; onUseToday: (itemIds: string[]) => void | Promise<void> }) {
   // Starts at the garment picker: without a body photo the AI draws a model from the profile numbers.
   const [step, setStep] = useState<Step>('pick');
-  const [consent, setConsent] = useState(consentGiven);
+  const [consent, setConsent] = useState(false);
+  const [serverBodyAvailable, setServerBodyAvailable] = useState(false);
   const [draft, setDraft] = useState<Photo | null>(null); // photo being checked
   const [body, setBody] = useState<Photo | null>(null); // accepted photo, not yet uploaded
   const [selected, setSelected] = useState<string[]>(() => initialItemIds.filter((id) => items.some((i) => i.id === id)).slice(0, MAX_GARMENTS));
@@ -41,13 +56,36 @@ export default function TryOn({ items, profile, initialItemIds, onBack, onUseTod
   const [useTodayError, setUseTodayError] = useState<string | null>(null);
   const runRef = useRef(0); // increments to cancel an ongoing poll
   const pendingJobIdRef = useRef<string | null>(null);
+  const pendingJobKeyRef = useRef<string | null>(null);
   const completedJobIdRef = useRef<string | null>(null);
   const imageRetryInFlightRef = useRef(false);
+  const deviceIdRef = useRef<string | null>(null);
 
   const count = selected.length + extras.length;
   const full = count >= MAX_GARMENTS;
 
   useEffect(() => () => { runRef.current++; }, []);
+  useEffect(() => {
+    let live = true;
+    void getDeviceId().then((deviceId) => {
+      if (!live) return;
+      deviceIdRef.current = deviceId;
+      setConsent(consentedDeviceIds.has(deviceId));
+      setServerBodyAvailable(bodyPhotoDeviceIds.has(deviceId));
+    }).catch(() => {});
+    return () => { live = false; };
+  }, []);
+
+  async function agreeToPhotoUse() {
+    try {
+      const deviceId = deviceIdRef.current ?? await getDeviceId();
+      deviceIdRef.current = deviceId;
+      consentedDeviceIds.add(deviceId);
+      setConsent(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Không xác nhận được quyền dùng ảnh. Thử lại nhé.');
+    }
+  }
 
   async function getPhoto(source: 'library' | 'camera') {
     setError(null);
@@ -87,22 +125,32 @@ export default function TryOn({ items, profile, initialItemIds, onBack, onUseTod
     const started = Date.now();
     const tick = setInterval(() => setElapsed(Math.floor((Date.now() - started) / 1000)), 1000);
     try {
-      let jobId = pendingJobIdRef.current;
+      const deviceId = deviceIdRef.current ?? await getDeviceId();
+      deviceIdRef.current = deviceId;
+      const hasServerBody = bodyPhotoDeviceIds.has(deviceId);
+      setServerBodyAvailable(hasServerBody);
+      const jobKey = JSON.stringify([deviceId, selected, extras.map((p) => p.uri), bodyPhotoRevisions.get(deviceId) ?? 0]);
+      let jobId = pendingTryOnJobs.get(jobKey) ?? (pendingJobKeyRef.current === jobKey ? pendingJobIdRef.current : null);
       if (!jobId) {
-        const created = await post<{ job_id: string }>(TRYON_URL, 'tryon.create', {
+        jobId = await createTryOnJob(jobKey, {
           item_ids: selected,
           body_image_base64: body ? body.base64 : null,
-          body_mode: body || bodyOnServer ? 'photo' : 'profile',
+          body_mode: body || hasServerBody ? 'photo' : 'profile',
           item_images_base64: extras.map((p) => p.base64),
-        }, 90000);
-        if (runRef.current !== run) return;
-        jobId = created.job_id;
+        });
+        // Keep the server job even if the user stopped waiting while the create response was in flight.
+        pendingTryOnJobs.set(jobKey, jobId);
         pendingJobIdRef.current = jobId;
+        pendingJobKeyRef.current = jobKey;
+        if (body) bodyPhotoDeviceIds.add(deviceId);
+        if (runRef.current !== run) return;
         if (body) {
-          bodyOnServer = true;
+          setServerBodyAvailable(true);
           setBody(null);
         }
       }
+      pendingJobIdRef.current = jobId;
+      pendingJobKeyRef.current = jobKey;
       let statusFailures = 0;
       while (runRef.current === run) {
         if (Date.now() - started > MAX_WAIT_MS) throw new Error('Đã chờ 3 phút nhưng chưa nhận được kết quả. Bấm Thử lại để tiếp tục kiểm tra yêu cầu đang chạy.');
@@ -122,20 +170,28 @@ export default function TryOn({ items, profile, initialItemIds, onBack, onUseTod
         }
         if (res.status === 'pending') continue;
         if (res.status === 'done' && res.image_url) {
+          pendingTryOnJobs.delete(jobKey);
           pendingJobIdRef.current = null;
+          pendingJobKeyRef.current = null;
           completedJobIdRef.current = jobId;
           setImageUrl(res.image_url);
           setImageError(null);
           setStep('result');
           return;
         }
+        pendingTryOnJobs.delete(jobKey);
         pendingJobIdRef.current = null;
+        pendingJobKeyRef.current = null;
         throw new Error(res.error ?? 'AI tạm thời không tạo được ảnh, thử lại sau nhé.');
       }
     } catch (e) {
       if (runRef.current !== run) return;
       const msg = e instanceof Error ? e.message : 'Có lỗi xảy ra.';
-      if (/ảnh toàn thân/.test(msg)) bodyOnServer = false;
+      if (/ảnh toàn thân/.test(msg)) {
+        const deviceId = deviceIdRef.current;
+        if (deviceId) bodyPhotoDeviceIds.delete(deviceId);
+        setServerBodyAvailable(false);
+      }
       setError(msg);
       setStep('failed');
     } finally {
@@ -146,7 +202,6 @@ export default function TryOn({ items, profile, initialItemIds, onBack, onUseTod
 
   function cancel() {
     runRef.current++;
-    pendingJobIdRef.current = null;
     setBusy(false);
     setStep('pick');
   }
@@ -196,7 +251,7 @@ export default function TryOn({ items, profile, initialItemIds, onBack, onUseTod
             <Button title="Chụp ảnh toàn thân" icon="camera" kind="outline" onPress={() => getPhoto('camera')} />
           </>
         ) : (
-          <Button title="Đồng ý và tiếp tục" onPress={() => { consentGiven = true; setConsent(true); }} />
+          <Button title="Đồng ý và tiếp tục" onPress={() => void agreeToPhotoUse()} />
         )}>
         <View style={st.hero}>
           <Icon name="person" size={72} color={C.wine} />
@@ -222,7 +277,16 @@ export default function TryOn({ items, profile, initialItemIds, onBack, onUseTod
       <Screen title="Kiểm tra ảnh" subtitle="Thấy rõ từ đầu đến chân là đạt." onBack={() => setStep('setup')}
         footer={(
           <>
-            <Button title="Dùng ảnh này" onPress={() => { setBody(draft); bodyOnServer = false; setStep('pick'); }} />
+            <Button title="Dùng ảnh này" onPress={() => {
+              setBody(draft);
+              const deviceId = deviceIdRef.current;
+              if (deviceId) {
+                bodyPhotoDeviceIds.delete(deviceId);
+                bodyPhotoRevisions.set(deviceId, (bodyPhotoRevisions.get(deviceId) ?? 0) + 1);
+              }
+              setServerBodyAvailable(false);
+              setStep('pick');
+            }} />
             <Button title="Chọn ảnh khác" kind="outline" onPress={() => getPhoto('library')} />
           </>
         )}>
@@ -313,10 +377,10 @@ export default function TryOn({ items, profile, initialItemIds, onBack, onUseTod
         <>
           <Text style={T.sub}>{count} món đã chọn</Text>
           <Button title="Tạo ảnh phối" icon="spark" disabled={count < 2} loading={busy} onPress={generate} />
-          {!body ? <Button title={bodyOnServer ? 'Cập nhật dáng người' : 'Dùng ảnh toàn thân của tôi'} kind="outline" onPress={() => setStep('setup')} /> : null}
+          {!body ? <Button title={serverBodyAvailable ? 'Cập nhật dáng người' : 'Dùng ảnh toàn thân của tôi'} kind="outline" onPress={() => setStep('setup')} /> : null}
         </>
       )}>
-      {!body && !bodyOnServer ? (
+      {!body && !serverBodyAvailable ? (
         <View style={st.bodyRow}>
           <Icon name="person" size={28} color={C.wine} />
           <Text style={[T.sub, { flex: 1 }]}>AI dựng dáng theo hồ sơ: {profile.height_cm} cm · {profile.weight_kg} kg · {PROPORTION_LABEL[profile.proportion].toLowerCase()}. Không cần ảnh của bạn.</Text>

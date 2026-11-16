@@ -119,16 +119,16 @@ export default function Onboarding({ initial, onDone, onRestore }: {
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', minHeight: 44 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
             {step > 0 ? (
-              <Pressable onPress={() => { setErr(null); setStep(step - 1); }} accessibilityRole="button" accessibilityLabel="Quay lại"
-                style={{ width: 44, height: 44, borderRadius: 12, backgroundColor: C.card, alignItems: 'center', justifyContent: 'center' }}>
+              <Pressable onPress={() => { setErr(null); setStep(step - 1); }} disabled={!!busy} accessibilityRole="button" accessibilityState={{ disabled: !!busy, busy: !!busy }} accessibilityLabel="Quay lại"
+                style={{ width: 44, height: 44, borderRadius: 12, backgroundColor: C.card, alignItems: 'center', justifyContent: 'center', opacity: busy ? 0.5 : 1 }}>
                 <Icon name="left" size={18} />
               </Pressable>
             ) : null}
             <Text style={{ fontSize: 11, fontWeight: '700', letterSpacing: 1, color: C.wine }}>TỦ ĐỒ CỦA BẠN</Text>
           </View>
           {step >= 2 ? (
-            <Pressable onPress={() => (step === 2 ? next() : finish('home'))} accessibilityRole="button" accessibilityLabel="Để sau"
-              style={{ minHeight: 44, paddingHorizontal: 16, borderRadius: 999, backgroundColor: C.card, borderWidth: 1, borderColor: C.line, alignItems: 'center', justifyContent: 'center' }}>
+            <Pressable onPress={() => (step === 2 ? next() : finish('home'))} disabled={!!busy} accessibilityRole="button" accessibilityState={{ disabled: !!busy, busy: !!busy }} accessibilityLabel="Để sau"
+              style={{ minHeight: 44, paddingHorizontal: 16, borderRadius: 999, backgroundColor: C.card, borderWidth: 1, borderColor: C.line, alignItems: 'center', justifyContent: 'center', opacity: busy ? 0.5 : 1 }}>
               <Text style={{ fontSize: 13, fontWeight: '600', color: C.text }}>Để sau</Text>
             </Pressable>
           ) : null}
@@ -158,9 +158,9 @@ export default function Onboarding({ initial, onDone, onRestore }: {
             </Pressable>
             {restoreOpen ? (
               <View style={{ gap: 8 }}>
-                <CodeSlots value={code} onChange={setCode} invalid={!!restoreErr} />
+                <CodeSlots value={code} onChange={(value) => { setCode(value); setRestoreErr(null); }} invalid={!!restoreErr} />
                 {restoreErr ? <Text accessibilityRole="alert" style={{ fontSize: 13, color: C.danger }}>{restoreErr}</Text> : null}
-            <Button title="Khôi phục" kind="secondary" onPress={restore} loading={restoring} disabled={!code.trim()} />
+                <Button title="Khôi phục" kind="secondary" onPress={restore} loading={restoring} disabled={!code.trim()} />
               </View>
             ) : null}
           </>
@@ -195,7 +195,7 @@ export default function Onboarding({ initial, onDone, onRestore }: {
             </Group>
             <Group title="Bạn hay cần outfit cho">
               <View style={row}>{OCCASIONS.map((o) => <Chip key={o} label={o} selected={p.occasions.includes(o)} onPress={() => set({ occasions: toggle(p.occasions, o) })} />)}</View>
-                {p.occasions.length === 0 ? <Text accessibilityLiveRegion="polite" style={{ fontSize: 12, color: C.danger }}>Chọn ít nhất một dịp.</Text> : null}
+              {p.occasions.length === 0 ? <Text accessibilityLiveRegion="polite" style={{ fontSize: 12, color: C.danger }}>Chọn ít nhất một dịp.</Text> : null}
             </Group>
           </>
         ) : null}
@@ -229,7 +229,7 @@ export default function Onboarding({ initial, onDone, onRestore }: {
       <View style={{ padding: S.page, paddingTop: 8, paddingBottom: 12 + BOTTOM_INSET, gap: 8, backgroundColor: C.pinkSoft }}>
         {err ? (
           <View style={{ gap: 4 }}>
-              <Text accessibilityRole="alert" style={{ fontSize: 13, color: C.danger }}>{err}</Text>
+            <Text accessibilityRole="alert" style={{ fontSize: 13, color: C.danger }}>{err}</Text>
             <Text style={{ fontSize: 12, color: C.sub }}>Bấm nút lại để thử lại.</Text>
           </View>
         ) : null}

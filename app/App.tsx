@@ -1,7 +1,7 @@
 // App shell: boot (profile + wardrobe), onboarding, tab bar. Screens live in src/screens.
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { StatusBar } from 'expo-status-bar';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { api, setDeviceId, todayStr } from './src/api';
 import Calendar from './src/screens/Calendar';
@@ -37,6 +37,7 @@ export default function App() {
   const [items, setItems] = useState<Item[]>([]);
   const [itemsLoading, setItemsLoading] = useState(false);
   const [itemsError, setItemsError] = useState<string | null>(null);
+  const itemsRequestId = useRef(0);
   const [tab, setTab] = useState<Tab>('today');
   const [tryOnIds, setTryOnIds] = useState<string[]>([]);
   const [tryOnFrom, setTryOnFrom] = useState<Tab>('today');
@@ -49,10 +50,12 @@ export default function App() {
   }, [tab]);
 
   const loadItems = useCallback(async () => {
+    const requestId = ++itemsRequestId.current;
     setItemsLoading(true);
     setItemsError(null);
     try {
       const fresh = (await api.itemsList()).items;
+      if (requestId !== itemsRequestId.current) return;
       // Signed URLs change on every list call; keep the URLs we already loaded when the picture is unchanged
       // (same item, cut-out still present or still missing) so images come from cache instead of downloading again.
       setItems((prev) => {
@@ -63,17 +66,21 @@ export default function App() {
         });
       });
     } catch (e) {
+      if (requestId !== itemsRequestId.current) return;
       setItemsError(e instanceof Error ? e.message : 'Không tải được tủ đồ.');
       throw e;
     } finally {
-      setItemsLoading(false);
+      if (requestId === itemsRequestId.current) setItemsLoading(false);
     }
   }, []);
 
   const boot = useCallback(async () => {
+    // Invalidate any inventory request from the previous device/profile before restore starts loading.
+    itemsRequestId.current += 1;
     setBooting(true);
     setBootError(null);
     setItems([]);
+    setItemsLoading(false);
     setItemsError(null);
     try {
       // These reads are independent. Start the local preference read while the first API call
@@ -196,11 +203,7 @@ export default function App() {
           onItemsChanged={() => void loadItems().catch(() => {})}
         />
       ) : (
-        itemsError && items.length === 0 ? (
-          <View style={{ flex: 1, justifyContent: 'center', padding: 20 }}><ErrorBox message={itemsError} onRetry={() => { void loadItems().catch(() => {}); }} /></View>
-        ) : (
-          <Wardrobe items={items} profile={profile} loading={itemsLoading} removeBg={removeBg} onReload={loadItems} autoAdd={autoAdd} onAutoAddHandled={() => setAutoAdd(null)} onOpenProfile={openProfile} onOpenStudio={() => setTab('studio')} />
-        )
+        <Wardrobe items={items} profile={profile} loading={itemsLoading} itemsError={itemsError} onRetryItems={() => { void loadItems().catch(() => {}); }} removeBg={removeBg} onReload={loadItems} autoAdd={autoAdd} onAutoAddHandled={() => setAutoAdd(null)} onOpenProfile={openProfile} onOpenStudio={() => setTab('studio')} />
       )}
     </View>
   )) : null;

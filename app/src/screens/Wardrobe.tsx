@@ -44,7 +44,7 @@ function PieceRow({ piece }: { piece: Piece }) {
   );
 }
 
-export default function Wardrobe({ items, profile, loading, removeBg, onReload, autoAdd, onAutoAddHandled, onOpenProfile, onOpenStudio }: { items: Item[]; profile: Profile; loading: boolean; removeBg: boolean; onReload: () => Promise<void>; autoAdd: 'camera' | 'library' | null; onAutoAddHandled: () => void; onOpenProfile: () => void; onOpenStudio: () => void }) {
+export default function Wardrobe({ items, profile, loading, itemsError, onRetryItems, removeBg, onReload, autoAdd, onAutoAddHandled, onOpenProfile, onOpenStudio }: { items: Item[]; profile: Profile; loading: boolean; itemsError: string | null; onRetryItems: () => void; removeBg: boolean; onReload: () => Promise<void>; autoAdd: 'camera' | 'library' | null; onAutoAddHandled: () => void; onOpenProfile: () => void; onOpenStudio: () => void }) {
   const [filter, setFilter] = useState<Filter>('all');
   const [tab, setTab] = useState<'mine' | 'shop'>('mine');
   const [query, setQuery] = useState('');
@@ -70,14 +70,18 @@ export default function Wardrobe({ items, profile, loading, removeBg, onReload, 
     if (!waitingId) return;
     let tries = 0;
     let live = true;
-    const iv = setInterval(async () => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const poll = async () => {
+      if (!live) return;
       tries += 1;
       const url = await api.itemsList().then((r) => r.items.find((i) => i.id === waitingId)?.cutout_url ?? null).catch(() => null);
       if (!live) return;
       if (url) { setCut({ id: waitingId, url }); onReload().catch(() => {}); }
-      else if (tries >= 12) setCut(null);
-    }, 4000);
-    return () => { live = false; clearInterval(iv); };
+      else if (tries >= 12) { setCut(null); return; }
+      if (!url) timer = setTimeout(() => { void poll(); }, 4000);
+    };
+    timer = setTimeout(() => { void poll(); }, 4000);
+    return () => { live = false; if (timer) clearTimeout(timer); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [waitingId]);
 
@@ -86,19 +90,33 @@ export default function Wardrobe({ items, profile, loading, removeBg, onReload, 
     if (!multiKey) return;
     let tries = 0;
     let live = true;
-    const iv = setInterval(async () => {
+    const ids = multiKey.split(',');
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const poll = async () => {
+      if (!live) return;
       tries += 1;
       const list = await api.itemsList().then((r) => r.items).catch(() => null);
       if (!live) return;
       if (list) {
-        const left = multiKey.split(',').filter((id) => !list.find((i) => i.id === id)?.cutout_url);
-        if (left.length < multiKey.split(',').length) onReload().catch(() => {});
+        const left = ids.filter((id) => !list.find((i) => i.id === id)?.cutout_url);
+        if (left.length < ids.length) {
+          await onReload().catch(() => {});
+          if (!live) return;
+        }
         if (left.length === 0) { setMultiWait([]); return; }
-        if (tries < 15) { if (left.join(',') !== multiKey) setMultiWait(left); return; }
-      } else if (tries < 15) return;
+        if (tries < 15) {
+          if (left.join(',') !== multiKey) setMultiWait(left);
+          timer = setTimeout(() => { void poll(); }, 4000);
+          return;
+        }
+      } else if (tries < 15) {
+        timer = setTimeout(() => { void poll(); }, 4000);
+        return;
+      }
       setMultiWait([]);
-    }, 4000);
-    return () => { live = false; clearInterval(iv); };
+    };
+    timer = setTimeout(() => { void poll(); }, 4000);
+    return () => { live = false; if (timer) clearTimeout(timer); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [multiKey]);
 
@@ -113,7 +131,7 @@ export default function Wardrobe({ items, profile, loading, removeBg, onReload, 
         return;
       }
       const { item } = await api.itemAdd(photo.base64, removeBg);
-      await onReload().catch(() => {});
+      await refreshAfterChange('Đã thêm món đồ');
       setReview({ item, isNew: true });
       if (removeBg && !item.cutout_url) setCut({ id: item.id, url: null });
     } catch (e) {
@@ -159,6 +177,31 @@ export default function Wardrobe({ items, profile, loading, removeBg, onReload, 
       const detail = e instanceof Error ? e.message : 'Có lỗi xảy ra.';
       setError(`Đã xoá món đồ. Chưa tải lại được tủ: ${detail}`);
       setErrorRetry(() => refreshAfterDelete);
+    }
+  };
+
+  // The mutation already succeeded, so retry only the list refresh and never repeat the write.
+  const refreshAfterChange = async (successMessage: string) => {
+    const reportError = (e: unknown) => {
+      const detail = e instanceof Error ? e.message : 'Có lỗi xảy ra.';
+      setError(`${successMessage}, nhưng chưa tải lại được tủ: ${detail}`);
+    };
+    const retryRefresh = async () => {
+      try {
+        await onReload();
+        setError(null);
+        setErrorRetry(null);
+      } catch (e) {
+        reportError(e);
+      }
+    };
+    try {
+      await onReload();
+      setError(null);
+      setErrorRetry(null);
+    } catch (e) {
+      reportError(e);
+      setErrorRetry(() => () => { void retryRefresh(); });
     }
   };
 
@@ -209,7 +252,7 @@ export default function Wardrobe({ items, profile, loading, removeBg, onReload, 
         setPieces((ps) => ps.map((p) => (pending.includes(p.id) ? { ...p, state: 'failed' } : p)));
         await new Promise((r) => setTimeout(r, 1200));
       }
-      await onReload().catch(() => {});
+      await refreshAfterChange(`Đã thêm ${created.length} món`);
       setScan(null);
       setAdded(pending.length ? `Đã thêm ${created.length} món · còn ${pending.length} ảnh đang tách nền` : `Đã thêm ${created.length} món`);
       if (pending.length) setMultiWait(pending);
@@ -230,8 +273,14 @@ export default function Wardrobe({ items, profile, loading, removeBg, onReload, 
         isNew={isNew}
         cutout={cut?.id === item.id ? cut.url : null}
         cutting={cut?.id === item.id && !cut.url}
+        refreshError={error ?? itemsError}
+        onRetryRefresh={errorRetry ?? onRetryItems}
         onBack={back}
-        onSave={async (patch) => { await api.itemUpdate(item.id, patch); await onReload(); back(); }}
+        onSave={async (patch) => {
+          await api.itemUpdate(item.id, patch);
+          back();
+          await refreshAfterChange('Đã lưu món đồ');
+        }}
         onDelete={async () => { startDelete(item); }}
       />
     );
@@ -328,7 +377,12 @@ export default function Wardrobe({ items, profile, loading, removeBg, onReload, 
             </Pressable>
           ))}
         </View>
-        {tab === 'shop' ? <ShopCatalog items={items} profile={profile} onOpenStudio={onOpenStudio} /> : (
+        {tab === 'shop' ? (
+          <>
+            {itemsError ? <ErrorBox message={itemsError} onRetry={onRetryItems} /> : null}
+            <ShopCatalog items={items} profile={profile} onOpenStudio={onOpenStudio} />
+          </>
+        ) : (
           <FlatList
             style={{ flex: 1 }}
             data={shown}
@@ -343,7 +397,7 @@ export default function Wardrobe({ items, profile, loading, removeBg, onReload, 
             contentContainerStyle={{ gap: S.gap, paddingBottom: 16 }}
             ListHeaderComponent={(
               <View style={{ gap: S.gap }}>
-                {error ? <ErrorBox message={error} onRetry={errorRetry ?? undefined} /> : null}
+                {error ? <ErrorBox message={error} onRetry={errorRetry ?? undefined} /> : itemsError ? <ErrorBox message={itemsError} onRetry={onRetryItems} /> : null}
                 {added ? <Banner text={added} /> : null}
                 <TextInput value={query} onChangeText={setQuery} placeholder="Tìm trong tủ đồ" placeholderTextColor={C.sub}
                   accessibilityLabel="Tìm trong tủ đồ" autoCorrect={false}
@@ -360,7 +414,7 @@ export default function Wardrobe({ items, profile, loading, removeBg, onReload, 
                 {loading && items.length === 0 ? <Loading text="Đang tải tủ đồ…" /> : null}
               </View>
             )}
-            ListEmptyComponent={!loading ? (
+            ListEmptyComponent={!loading && !itemsError ? (
               <Card style={{ gap: 6, alignItems: 'center', padding: 24 }}>
                 <Text style={T.h2}>{items.length === 0 ? 'Thêm món đồ đầu tiên' : q ? 'Không tìm thấy món phù hợp' : 'Chưa có món nào ở nhóm này'}</Text>
                 <Text style={[T.sub, { textAlign: 'center' }]}>{items.length === 0 ? 'Chụp một món đồ, AI sẽ tự điền thông tin cho bạn.' : q ? 'Thử từ khoá khác hoặc xoá tìm kiếm để xem lại tủ đồ.' : 'Thử chọn nhóm khác để xem các món trong tủ.'}</Text>

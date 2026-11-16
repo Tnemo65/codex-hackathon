@@ -82,49 +82,63 @@ const call = <T,>(action: string, payload: Record<string, unknown> = {}, timeout
 // gets refused by Open-Meteo, while a phone gets an answer in about a second.
 const PLACES: Record<string, [number, number]> = { 'Hà Nội': [21.0285, 105.8542], 'TP. Hồ Chí Minh': [10.8231, 106.6297], 'Đà Nẵng': [16.0544, 108.2022] };
 const weatherCache = new Map<string, { at: number; data: Weather }>();
+const weatherRequests = new Map<string, Promise<Weather>>();
+
+function singleFlight<T>(requests: Map<string, Promise<T>>, key: string, start: () => Promise<T>): Promise<T> {
+  const existing = requests.get(key);
+  if (existing) return existing;
+  const pending = start();
+  requests.set(key, pending);
+  const clear = () => { if (requests.get(key) === pending) requests.delete(key); };
+  void pending.then(clear, clear);
+  return pending;
+}
 
 export async function fetchWeather(date: string, city = 'Hà Nội'): Promise<Weather> {
   const place = PLACES[city] ? city : 'Hà Nội';
   const key = `${place}|${date}`;
   const hit = weatherCache.get(key);
   if (hit && Date.now() - hit.at < 20 * 60 * 1000) return hit.data;
-  const [lat, lon] = PLACES[place];
-  const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
-    `&hourly=temperature_2m,precipitation_probability,wind_speed_10m,uv_index&timezone=Asia%2FBangkok&start_date=${date}&end_date=${date}`;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 8000);
-  try {
-    const res = await fetch(url, { signal: controller.signal });
-    if (!res.ok) throw new Error(`open-meteo ${res.status}`);
-    const h = (await res.json()).hourly as Record<string, number[]>;
-    const part = (from: number, to: number) => {
-      const idx = Array.from({ length: to - from + 1 }, (_, i) => from + i);
-      const t = Math.round(idx.reduce((s, i) => s + (h.temperature_2m[i] ?? 0), 0) / idx.length);
-      const rain = Math.max(...idx.map((i) => h.precipitation_probability[i] ?? 0));
-      const wind = Math.round(Math.max(...idx.map((i) => h.wind_speed_10m[i] ?? 0)));
-      const uv = Math.max(...idx.map((i) => h.uv_index[i] ?? 0));
-      const cond = rain >= 60 ? 'Mưa' : rain >= 35 ? 'Có thể mưa' : t <= 17 ? 'Trời lạnh' : uv >= 7 ? 'Nắng gắt' : uv >= 3 ? 'Nắng nhẹ' : t <= 22 ? 'Trời mát' : 'Trời dịu';
-      return { t, cond, rain_pct: Math.round(rain), wind_kmh: wind };
-    };
-    const day = h.temperature_2m.slice(6, 23);
-    const morning = part(6, 11), afternoon = part(12, 17), evening = part(18, 22);
-    const data: Weather = {
-      place, date, morning, afternoon, evening,
-      t_min: Math.round(Math.min(...day)), t_max: Math.round(Math.max(...day)),
-      uv_max: Math.round(Math.max(...h.uv_index.slice(6, 19))),
-      summary: `Sáng ${morning.t}° · ${morning.cond}`,
-    };
-    weatherCache.set(key, { at: Date.now(), data });
-    return data;
-  } catch {
-    throw new Error('Chưa lấy được thời tiết, thử lại nhé.');
-  } finally {
-    clearTimeout(timer);
-  }
+  return singleFlight(weatherRequests, key, async () => {
+    const [lat, lon] = PLACES[place];
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
+      `&hourly=temperature_2m,precipitation_probability,wind_speed_10m,uv_index&timezone=Asia%2FBangkok&start_date=${date}&end_date=${date}`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    try {
+      const res = await fetch(url, { signal: controller.signal });
+      if (!res.ok) throw new Error(`open-meteo ${res.status}`);
+      const h = (await res.json()).hourly as Record<string, number[]>;
+      const part = (from: number, to: number) => {
+        const idx = Array.from({ length: to - from + 1 }, (_, i) => from + i);
+        const t = Math.round(idx.reduce((s, i) => s + (h.temperature_2m[i] ?? 0), 0) / idx.length);
+        const rain = Math.max(...idx.map((i) => h.precipitation_probability[i] ?? 0));
+        const wind = Math.round(Math.max(...idx.map((i) => h.wind_speed_10m[i] ?? 0)));
+        const uv = Math.max(...idx.map((i) => h.uv_index[i] ?? 0));
+        const cond = rain >= 60 ? 'Mưa' : rain >= 35 ? 'Có thể mưa' : t <= 17 ? 'Trời lạnh' : uv >= 7 ? 'Nắng gắt' : uv >= 3 ? 'Nắng nhẹ' : t <= 22 ? 'Trời mát' : 'Trời dịu';
+        return { t, cond, rain_pct: Math.round(rain), wind_kmh: wind };
+      };
+      const day = h.temperature_2m.slice(6, 23);
+      const morning = part(6, 11), afternoon = part(12, 17), evening = part(18, 22);
+      const data: Weather = {
+        place, date, morning, afternoon, evening,
+        t_min: Math.round(Math.min(...day)), t_max: Math.round(Math.max(...day)),
+        uv_max: Math.round(Math.max(...h.uv_index.slice(6, 19))),
+        summary: `Sáng ${morning.t}° · ${morning.cond}`,
+      };
+      weatherCache.set(key, { at: Date.now(), data });
+      return data;
+    } catch {
+      throw new Error('Chưa lấy được thời tiết, thử lại nhé.');
+    } finally {
+      clearTimeout(timer);
+    }
+  });
 }
 
 export type DayWeather = { t_min: number; t_max: number; rain_pct: number; cond: string };
 const rangeCache = new Map<string, { at: number; data: Record<string, DayWeather> }>();
+const rangeRequests = new Map<string, Promise<Record<string, DayWeather>>>();
 
 // Daily forecast for a date range, keyed by YYYY-MM-DD. Open-Meteo serves ~92 days back .. 16 days ahead.
 // Returns {} only when the requested range is entirely outside the supported forecast window.
@@ -138,31 +152,33 @@ export async function fetchWeatherRange(from: string, to: string, city = 'Hà N�
   const key = `${place}|${lo}|${hi}`;
   const hit = rangeCache.get(key);
   if (hit && Date.now() - hit.at < 20 * 60 * 1000) return hit.data;
-  const [lat, lon] = PLACES[place];
-  const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
-    `&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max,uv_index_max&timezone=Asia%2FBangkok&start_date=${lo}&end_date=${hi}`;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 8000);
-  try {
-    const res = await fetch(url, { signal: controller.signal });
-    if (!res.ok) throw new Error(`open-meteo ${res.status}`);
-    const d = (await res.json()).daily as Record<string, (number | string | null)[]>;
-    const out: Record<string, DayWeather> = {};
-    (d.time as string[]).forEach((date, i) => {
-      const tMax = d.temperature_2m_max[i] as number | null, tMin = d.temperature_2m_min[i] as number | null;
-      if (tMax == null || tMin == null) return;
-      const rain = (d.precipitation_probability_max?.[i] as number | null) ?? 0;
-      const uv = (d.uv_index_max?.[i] as number | null) ?? 0;
-      const cond = rain >= 60 ? 'Mưa' : rain >= 35 ? 'Có thể mưa' : tMax <= 18 ? 'Trời lạnh' : uv >= 7 ? 'Nắng gắt' : uv >= 3 ? 'Nắng nhẹ' : tMax <= 23 ? 'Trời mát' : 'Trời dịu';
-      out[date] = { t_min: Math.round(tMin), t_max: Math.round(tMax), rain_pct: Math.round(rain), cond };
-    });
-    rangeCache.set(key, { at: Date.now(), data: out });
-    return out;
-  } catch {
-    throw new Error('Chưa lấy được dự báo thời tiết, thử lại nhé.');
-  } finally {
-    clearTimeout(timer);
-  }
+  return singleFlight(rangeRequests, key, async () => {
+    const [lat, lon] = PLACES[place];
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
+      `&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max,uv_index_max&timezone=Asia%2FBangkok&start_date=${lo}&end_date=${hi}`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    try {
+      const res = await fetch(url, { signal: controller.signal });
+      if (!res.ok) throw new Error(`open-meteo ${res.status}`);
+      const d = (await res.json()).daily as Record<string, (number | string | null)[]>;
+      const out: Record<string, DayWeather> = {};
+      (d.time as string[]).forEach((date, i) => {
+        const tMax = d.temperature_2m_max[i] as number | null, tMin = d.temperature_2m_min[i] as number | null;
+        if (tMax == null || tMin == null) return;
+        const rain = (d.precipitation_probability_max?.[i] as number | null) ?? 0;
+        const uv = (d.uv_index_max?.[i] as number | null) ?? 0;
+        const cond = rain >= 60 ? 'Mưa' : rain >= 35 ? 'Có thể mưa' : tMax <= 18 ? 'Trời lạnh' : uv >= 7 ? 'Nắng gắt' : uv >= 3 ? 'Nắng nhẹ' : tMax <= 23 ? 'Trời mát' : 'Trời dịu';
+        out[date] = { t_min: Math.round(tMin), t_max: Math.round(tMax), rain_pct: Math.round(rain), cond };
+      });
+      rangeCache.set(key, { at: Date.now(), data: out });
+      return out;
+    } catch {
+      throw new Error('Chưa lấy được dự báo thời tiết, thử lại nhé.');
+    } finally {
+      clearTimeout(timer);
+    }
+  });
 }
 
 export const api = {

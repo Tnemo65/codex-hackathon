@@ -92,7 +92,7 @@ export default function Stylist({ items, profile, onOpenTryOn, onPlanChanged, on
         <View style={st.outfitCard}>
           {!loaded ? <ActivityIndicator color={C.wine} /> : planError ? (
             <View style={{ gap: 8 }}>
-              <Text style={{ fontSize: 13, color: C.danger }}>{planError}</Text>
+              <Text accessibilityRole="alert" style={{ fontSize: 13, color: C.danger }}>{planError}</Text>
               <Button title="Thử tải lại outfit" kind="outline" onPress={() => void loadPlan()} />
             </View>
           ) : outfit ? (
@@ -113,7 +113,7 @@ export default function Stylist({ items, profile, onOpenTryOn, onPlanChanged, on
             if (m.kind === 'error') {
               return (
                 <View key={m.id} style={[st.bubble, st.bot, { gap: 10 }]}>
-                  <Text style={{ fontSize: 14, color: C.danger }}>{m.text}</Text>
+                  <Text accessibilityRole="alert" style={{ fontSize: 14, color: C.danger }}>{m.text}</Text>
                   <Button title="Thử lại" kind="outline" disabled={busy} onPress={() => { drop(m.id); void send(m.retryText, false); }} />
                 </View>
               );

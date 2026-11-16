@@ -45,8 +45,10 @@ export function OutfitPhoto({ items, profile, width, height, auto = true }: { it
     setUrl(null); setErr(null); fade.setValue(0);
     if (!k) { setPhase('idle'); return; }
     const alive = () => live.current === k;
+    let job: string | null = null;
+    let discardJob = false;
     try {
-      let job = fresh ? null : (await readCache())[k] ?? null;
+      job = fresh ? null : (await readCache())[k] ?? null;
       if (!alive()) return;
       if (!job && !auto && !asked) { setPhase('ask'); return; }
       setPhase('pending');
@@ -59,13 +61,21 @@ export function OutfitPhoto({ items, profile, width, height, auto = true }: { it
         const s = await tryonApi.status(job);
         if (!alive()) return;
         if (s.status === 'done' && s.image_url) { setUrl(s.image_url); setPhase('done'); return; }
-        if (s.status === 'failed') throw new Error(s.error ?? 'AI chưa tạo được ảnh.');
-        if (Date.now() - started > MAX_WAIT_MS) throw new Error('Tạo ảnh quá lâu.');
+        if (s.status === 'failed') {
+          discardJob = true;
+          throw new Error(s.error ?? 'AI chưa tạo được ảnh.');
+        }
+        if (Date.now() - started > MAX_WAIT_MS) {
+          discardJob = true;
+          throw new Error('Tạo ảnh quá lâu.');
+        }
         await new Promise((r) => setTimeout(r, POLL_MS));
       }
     } catch (e) {
       if (!alive()) return;
-      await writeCache(k, null); // a failed or expired job must not be reused
+      const jobMissing = e instanceof Error && e.message === 'Không tìm thấy yêu cầu tạo ảnh.';
+      if (discardJob || jobMissing) await writeCache(k, null);
+      else if (job) await writeCache(k, job); // keep pending work when status polling only failed transiently
       setErr(e instanceof Error ? e.message : 'AI chưa tạo được ảnh.');
       setPhase('failed');
     }
@@ -108,7 +118,7 @@ export function OutfitPhoto({ items, profile, width, height, auto = true }: { it
       ) : null}
 
       {phase === 'failed' ? (
-        <Pressable onPress={() => void run(key, true)} accessibilityRole="button" accessibilityLabel="Tạo lại ảnh người mẫu"
+        <Pressable onPress={() => void run(key, false)} accessibilityRole="button" accessibilityLabel="Thử kiểm tra ảnh người mẫu lại"
           style={{ position: 'absolute', left: 10, top: 10, maxWidth: areaW - 20, backgroundColor: C.card, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 6 }}>
           <Text numberOfLines={2} style={{ fontSize: 11, color: C.sub }}>{err}</Text>
           <Text style={{ fontSize: 12, fontWeight: '700', color: C.wine, marginTop: 2 }}>Thử lại</Text>

@@ -109,7 +109,7 @@ export default function Calendar({ items, onOpenTryOn, onOpenProfile, profile }:
     }>
       <View style={st.seg}>
         {(['month', 'week'] as const).map((m) => (
-          <Pressable key={m} onPress={() => setMode(m)} accessibilityRole="button" accessibilityState={{ selected: mode === m }}
+          <Pressable key={m} onPress={() => { if (m === mode) return; setMode(m); setAnchor(parse(selected)); }} accessibilityRole="button" accessibilityState={{ selected: mode === m }}
             style={[st.segBtn, mode === m && { backgroundColor: C.pink }]}>
             <Text style={{ fontSize: 14, fontWeight: '700', color: mode === m ? C.wine : C.sub }}>{m === 'month' ? 'Tháng' : 'Tuần'}</Text>
           </Pressable>

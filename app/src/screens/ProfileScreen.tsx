@@ -1,5 +1,5 @@
 // "Hồ sơ": edit profile, restore code, background-removal switch.
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { Switch, Text, TextInput, View } from 'react-native';
 import { C, T } from '../theme';
 import { COMMUTE_LABEL, FIT_LABEL, JOBS, OCCASIONS, PROPORTION_LABEL, STYLES_F, STYLES_M, type Commute, type DressCode, type FitPref, type Profile, type Proportion, type Wear } from '../types';
@@ -24,8 +24,10 @@ export default function ProfileScreen({ profile, restoreCode, removeBg, onToggle
   const [code, setCode] = useState('');
   const [rBusy, setRBusy] = useState(false);
   const [rError, setRError] = useState<string | null>(null);
+  const editRevision = useRef(0);
 
-  const set = <K extends keyof Profile>(k: K, v: Profile[K]) => { setSaved(false); setP((x) => ({ ...x, [k]: v })); };
+  const markEdited = () => { editRevision.current++; setSaved(false); setError(null); };
+  const set = <K extends keyof Profile>(k: K, v: Profile[K]) => { markEdited(); setP((x) => ({ ...x, [k]: v })); };
   const styles = p.wear === 'm'
     ? STYLES_M
     : p.wear === 'u'
@@ -38,9 +40,13 @@ export default function ProfileScreen({ profile, restoreCode, removeBg, onToggle
 
   const save = async () => {
     if (hBad || wBad) { setError('Kiểm tra lại chiều cao và cân nặng.'); return; }
+    const revision = editRevision.current;
     setBusy(true); setError(null); setSaved(false);
-    try { await onSave({ ...p, height_cm: hn, weight_kg: wn }); setSaved(true); }
-    catch (e) { setError(e instanceof Error ? e.message : 'Có lỗi xảy ra.'); }
+    try {
+      await onSave({ ...p, height_cm: hn, weight_kg: wn });
+      if (revision === editRevision.current) setSaved(true);
+    }
+    catch (e) { if (revision === editRevision.current) setError(e instanceof Error ? e.message : 'Có lỗi xảy ra.'); }
     finally { setBusy(false); }
   };
 
@@ -56,7 +62,7 @@ export default function ProfileScreen({ profile, restoreCode, removeBg, onToggle
     <Screen title="Hồ sơ" subtitle={profile.name ? `Chào ${profile.name}` : undefined}>
       <Card style={{ gap: 8 }}>
         <Text style={T.h2}>Về bạn</Text>
-        <Wrap>{WEAR.map(([v, l]) => <Chip key={v} label={l} selected={p.wear === v} onPress={() => { setSaved(false); setP((x) => (x.wear === v ? x : { ...x, wear: v, styles: [] })); }} />)}</Wrap>
+        <Wrap>{WEAR.map(([v, l]) => <Chip key={v} label={l} selected={p.wear === v} onPress={() => { markEdited(); setP((x) => (x.wear === v ? x : { ...x, wear: v, styles: [] })); }} />)}</Wrap>
         <Label text="Nghề nghiệp" />
         <Wrap>{JOBS.map((j) => <Chip key={j} label={j} selected={p.job === j} onPress={() => set('job', j)} />)}</Wrap>
         <Label text="Quy định trang phục" />
@@ -68,12 +74,12 @@ export default function ProfileScreen({ profile, restoreCode, removeBg, onToggle
         <View style={{ flexDirection: 'row', gap: 10 }}>
           <View style={{ flex: 1, gap: 4 }}>
             <Label text="Chiều cao (cm)" />
-            <TextInput value={h} onChangeText={(v) => { setSaved(false); setH(v.replace(/[^0-9]/g, '')); }} keyboardType="number-pad" style={[input, hBad && { borderColor: C.danger }]} accessibilityLabel="Chiều cao" />
+            <TextInput value={h} onChangeText={(v) => { markEdited(); setH(v.replace(/[^0-9]/g, '')); }} keyboardType="number-pad" style={[input, hBad && { borderColor: C.danger }]} accessibilityLabel="Chiều cao" />
             {hBad ? <Text accessibilityLiveRegion="polite" style={{ fontSize: 12, color: C.danger }}>Từ 120 đến 210</Text> : null}
           </View>
           <View style={{ flex: 1, gap: 4 }}>
             <Label text="Cân nặng (kg)" />
-            <TextInput value={w} onChangeText={(v) => { setSaved(false); setW(v.replace(/[^0-9]/g, '')); }} keyboardType="number-pad" style={[input, wBad && { borderColor: C.danger }]} accessibilityLabel="Cân nặng" />
+            <TextInput value={w} onChangeText={(v) => { markEdited(); setW(v.replace(/[^0-9]/g, '')); }} keyboardType="number-pad" style={[input, wBad && { borderColor: C.danger }]} accessibilityLabel="Cân nặng" />
             {wBad ? <Text accessibilityLiveRegion="polite" style={{ fontSize: 12, color: C.danger }}>Từ 30 đến 150</Text> : null}
           </View>
         </View>
@@ -93,17 +99,17 @@ export default function ProfileScreen({ profile, restoreCode, removeBg, onToggle
         <Wrap>{styles.map((s) => <Chip key={s} label={s} selected={p.styles.includes(s)} onPress={() => set('styles', toggle(p.styles, s))} />)}</Wrap>
       </Card>
 
-        {error ? <Text accessibilityRole="alert" style={{ color: C.danger, fontSize: 13 }}>{error}</Text> : null}
+      {error ? <Text accessibilityRole="alert" style={{ color: C.danger, fontSize: 13 }}>{error}</Text> : null}
       <Button title="Lưu hồ sơ" onPress={save} loading={busy} />
-        {saved ? <Text accessibilityLiveRegion="polite" style={{ color: C.ok, fontSize: 13, fontWeight: '600', textAlign: 'center' }}>Đã lưu</Text> : null}
+      {saved ? <Text accessibilityLiveRegion="polite" style={{ color: C.ok, fontSize: 13, fontWeight: '600', textAlign: 'center' }}>Đã lưu</Text> : null}
 
       <Card style={{ gap: 8 }}>
         <Text style={T.h2}>Mã khôi phục</Text>
         <Text selectable style={{ fontSize: 28, fontWeight: '800', letterSpacing: 3, color: C.wine }}>{restoreCode ?? '—'}</Text>
         <Text style={T.sub}>Dùng mã này để mở lại tủ đồ trên máy khác.</Text>
         <CodeSlots value={code} onChange={(v) => { setRError(null); setCode(v); }} invalid={!!rError} />
-          {rError ? <Text accessibilityRole="alert" style={{ color: C.danger, fontSize: 13 }}>{rError}</Text> : null}
-          <Button title="Khôi phục" kind="secondary" onPress={restore} loading={rBusy} disabled={!code.trim()} />
+        {rError ? <Text accessibilityRole="alert" style={{ color: C.danger, fontSize: 13 }}>{rError}</Text> : null}
+        <Button title="Khôi phục" kind="secondary" onPress={restore} loading={rBusy} disabled={!code.trim()} />
       </Card>
 
       <Card style={{ gap: 8 }}>

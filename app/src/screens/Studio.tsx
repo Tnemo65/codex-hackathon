@@ -52,6 +52,7 @@ export default function Studio({ items, profile, onOpenTryOn, onPlanChanged, onO
   const [savedBusy, setSavedBusy] = useState(false);
   const [savedError, setSavedError] = useState<string | null>(null);
   const [savedErrorKind, setSavedErrorKind] = useState<'load' | 'write' | null>(null);
+  const [shopLinkError, setShopLinkError] = useState<{ product: Product; message: string } | null>(null);
   const pendingSavedWriteRef = useRef<PendingSavedWrite | null>(null);
   const savedWriteInFlightRef = useRef(false);
   const [busy, setBusy] = useState(false);
@@ -151,6 +152,12 @@ export default function Studio({ items, profile, onOpenTryOn, onPlanChanged, onO
       onPlanChanged();
       setNote('Đã dùng cho hôm nay');
     } catch (e) { setErr(e instanceof Error ? e.message : 'Có lỗi xảy ra.'); } finally { setBusy(false); }
+  }
+
+  async function openShopLink(product: Product) {
+    setShopLinkError(null);
+    try { await Linking.openURL(product.shop_url); }
+    catch { setShopLinkError({ product, message: `Không mở được liên kết ${product.shop}. Kiểm tra kết nối rồi thử lại.` }); }
   }
 
   async function save() {
@@ -305,12 +312,14 @@ export default function Studio({ items, profile, onOpenTryOn, onPlanChanged, onO
                     <Text style={{ fontSize: 14, fontWeight: '700', color: C.text }} numberOfLines={1}>{p.name}</Text>
                     <Text style={T.small}>{money(p.price)} · {p.shop}</Text>
                   </View>
-                  <Button title={`Tìm tương tự trên ${p.shop}`} kind="outline" onPress={() => void Linking.openURL(p.shop_url).catch(() => setErr('Không mở được liên kết.'))} />
+                  <Button title={`Tìm tương tự trên ${p.shop}`} kind="outline" onPress={() => void openShopLink(p)} />
                 </View>
               ))}
               <Text style={{ fontSize: 14, fontWeight: '700', color: C.text }}>Tổng: {money(total)}</Text>
             </Card>
           ) : null}
+
+          {shopLinkError ? <ErrorBox message={shopLinkError.message} onRetry={() => void openShopLink(shopLinkError.product)} /> : null}
 
           {note ? <Badge text={note} tone="ok" /> : null}
           {err ? <ErrorBox message={err} onRetry={() => void useToday()} /> : null}

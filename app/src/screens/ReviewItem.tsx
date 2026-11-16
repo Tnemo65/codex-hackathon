@@ -3,7 +3,7 @@ import React, { useState } from 'react';
 import { Image, Text, TextInput, View } from 'react-native';
 import { C, R, T } from '../theme';
 import { KIND_LABEL, OCCASIONS, type Item, type Kind } from '../types';
-import { Badge, Button, Card, Chip, Screen } from '../ui';
+import { Badge, Button, Card, Chip, ErrorBox, Screen } from '../ui';
 
 const LEN_UP: [string, string][] = [['crop', 'Lửng'], ['ngang_hong', 'Ngang hông'], ['qua_hong', 'Qua hông'], ['dai', 'Dài']];
 const LEN_DOWN: [string, string][] = [['tren_goi', 'Trên gối'], ['ngang_goi', 'Ngang gối'], ['mat_ca', 'Tới mắt cá'], ['cham_dat', 'Chấm đất']];
@@ -33,7 +33,7 @@ function Row({ label, ai, children }: { label: string; ai: boolean; children: Re
 const Wrap = ({ children }: { children: React.ReactNode }) => <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>{children}</View>;
 
 // cutout: cut-out image that arrived after `item` was loaded; cutting: the server is still making it.
-export default function ReviewItem({ item, isNew, cutout, cutting, onSave, onDelete, onBack }: { item: Item; isNew: boolean; cutout?: string | null; cutting?: boolean; onSave: (patch: Partial<Item>) => Promise<void>; onDelete: () => Promise<void>; onBack: () => void }) {
+export default function ReviewItem({ item, isNew, cutout, cutting, refreshError, onRetryRefresh, onSave, onDelete, onBack }: { item: Item; isNew: boolean; cutout?: string | null; cutting?: boolean; refreshError?: string | null; onRetryRefresh?: () => void; onSave: (patch: Partial<Item>) => Promise<void>; onDelete: () => Promise<void>; onBack: () => void }) {
   const cutUrl = cutout ?? item.cutout_url;
   const [f, setF] = useState<Item>(item);
   const [busy, setBusy] = useState(false);
@@ -75,6 +75,7 @@ export default function ReviewItem({ item, isNew, cutout, cutting, onSave, onDel
       onBack={onBack}
       footer={
         <>
+          {refreshError ? <ErrorBox message={refreshError} onRetry={onRetryRefresh} /> : null}
           {error ? <Text accessibilityRole="alert" style={{ color: C.danger, fontSize: 13 }}>{error}</Text> : null}
           <Button title="Lưu vào tủ đồ" onPress={save} loading={busy && !confirm} disabled={busy} />
           {confirm ? (

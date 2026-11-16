@@ -59,6 +59,8 @@ export default function Today({ profile, items, itemsLoading, itemsError, onRetr
   const [slot, setSlot] = useState(0); // where an off-list selected outfit sits
   const [idx, setIdx] = useState(0);
   const [weather, setWeather] = useState<Weather | null>(null);
+  const [weatherLoading, setWeatherLoading] = useState(false);
+  const [weatherError, setWeatherError] = useState<string | null>(null);
   const [empty, setEmpty] = useState(false);
   const [inventoryCheckPending, setInventoryCheckPending] = useState(false);
   const [mode, setMode] = useState<'canvas' | 'body'>('body'); // Figma opens on the model photo
@@ -78,6 +80,7 @@ export default function Today({ profile, items, itemsLoading, itemsError, onRetr
   const req = useRef(0);
   const retry = useRef<() => void>(() => {});
   const dateRef = useRef(date);
+  const weatherReq = useRef(0);
   dateRef.current = date;
 
   const kinds = new Set(items.map((i) => i.kind));
@@ -115,9 +118,20 @@ export default function Today({ profile, items, itemsLoading, itemsError, onRetr
     });
   }
 
+  const loadWeather = (targetDate = date) => {
+    const id = ++weatherReq.current;
+    setWeatherError(null);
+    setWeatherLoading(true);
+    api.weatherGet(targetDate)
+      .then((r) => { if (id === weatherReq.current && targetDate === dateRef.current) setWeather(r.weather); })
+      .catch((e) => { if (id === weatherReq.current && targetDate === dateRef.current) setWeatherError(errText(e)); })
+      .finally(() => { if (id === weatherReq.current && targetDate === dateRef.current) setWeatherLoading(false); });
+  };
+
   function load() {
     void guard('Đang mở kế hoạch…', load, async (alive) => {
-      setPlan(null); setWeather(null); setEmpty(false); setInventoryCheckPending(false); setNote(''); setSaveErr(null);
+      weatherReq.current++;
+      setPlan(null); setWeather(null); setWeatherLoading(false); setWeatherError(null); setEmpty(false); setInventoryCheckPending(false); setNote(''); setSaveErr(null);
       const { plan: p } = await api.planGet(date);
       if (!alive()) return;
       if (p) {
@@ -139,7 +153,7 @@ export default function Today({ profile, items, itemsLoading, itemsError, onRetr
     setInventoryCheckPending(false);
     if (tooSmall) {
       setEmpty(true);
-      api.weatherGet(date).then((r) => { if (date === dateRef.current) setWeather(r.weather); }).catch(() => {});
+      loadWeather(date);
     } else {
       suggest();
     }
@@ -253,7 +267,7 @@ export default function Today({ profile, items, itemsLoading, itemsError, onRetr
           </Pressable>
           <View style={{ flex: 1, alignItems: 'center' }}>
             <Text style={T.h2}>{dateLabel(date)}</Text>
-            <Text style={[T.small, { marginTop: 2 }]} numberOfLines={1}>{w ? `${w.summary} · ${profile.city}` : `${isToday ? 'Hôm nay' : 'Ngày mai'} · ${profile.city}`}</Text>
+            <Text style={[T.small, { marginTop: 2 }]} numberOfLines={1}>{w ? `${w.summary} · ${profile.city}` : weatherLoading ? `Đang tải thời tiết · ${profile.city}` : weatherError ? `Không tải được thời tiết · ${profile.city}` : `${isToday ? 'Hôm nay' : 'Ngày mai'} · ${profile.city}`}</Text>
           </View>
           <Pressable onPress={() => setOffset(1)} disabled={!isToday} accessibilityRole="button" accessibilityLabel="Xem ngày mai" style={[st.arrow, { opacity: isToday ? 1 : 0.3 }]}>
             <Icon name="right" size={20} />
@@ -283,6 +297,12 @@ export default function Today({ profile, items, itemsLoading, itemsError, onRetr
           <Card style={{ gap: 10 }}>
             <Text style={T.h2}>Tủ đồ chưa đủ để phối</Text>
             <Text style={T.sub}>Cần ít nhất 3 món, có áo và quần hoặc chân váy, hoặc một váy liền.</Text>
+            {weatherError ? (
+              <View style={{ gap: 8 }}>
+                <Text accessibilityRole="alert" style={{ fontSize: 13, color: C.danger }}>Không tải được dự báo thời tiết. {weatherError}</Text>
+                <Button title="Thử tải thời tiết lại" kind="outline" onPress={() => loadWeather(date)} loading={weatherLoading} />
+              </View>
+            ) : null}
             <Button title="Thêm món" icon="plus" onPress={onGoWardrobe} />
           </Card>
         ) : !viewed ? (

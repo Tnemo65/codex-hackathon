@@ -22,27 +22,49 @@ const matchCache = new Map<string, ProductMatch>();
 const money =(n: number) => `${Math.round(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.')}đ`;
 
 export function ShopCatalog({ items, profile, onOpenStudio }: { items: Item[]; profile: Profile; onOpenStudio: () => void }) {
+  const wardrobeKey = items
+    .map((item) => [item.id, item.name, item.kind, item.color_name ?? '', item.material ?? ''].join('|'))
+    .sort()
+    .join(',');
+  const profileKey = [profile.wear, profile.job, profile.dress_code, profile.height_cm, profile.weight_kg,
+    profile.proportion, profile.fit_pref, [...profile.styles].sort().join('|')].join(':');
+  const picksCacheKey = JSON.stringify([profileKey, wardrobeKey]);
   const [products, setProducts] = useState<Product[]>(cachedCatalog());
-  const [picks, setPicks] = useState(cachedPicks());
-  const [loadingCatalog, setLoadingCatalog] = useState(cachedCatalog().length === 0);
-  const [loadingPicks, setLoadingPicks] = useState(cachedPicks().length === 0);
+  const [pickState, setPickState] = useState(() => ({ key: picksCacheKey, values: cachedPicks(picksCacheKey) }));
+  const [loadState, setLoadState] = useState(() => ({
+    key: picksCacheKey,
+    catalogLoading: cachedCatalog().length === 0,
+    picksLoading: cachedPicks(picksCacheKey).length === 0,
+  }));
+  const picks = pickState.key === picksCacheKey ? pickState.values : cachedPicks(picksCacheKey);
+  const loadingCatalog = loadState.catalogLoading;
+  const loadingPicks = loadState.key === picksCacheKey ? loadState.picksLoading : cachedPicks(picksCacheKey).length === 0;
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>('all');
   const [open, setOpen] = useState<Product | null>(null);
   const { width } = useWindowDimensions();
+  const picksKeyRef = useRef(picksCacheKey);
+  picksKeyRef.current = picksCacheKey;
   // Measured grid width (scrollbar / safe-area can make it narrower than the window), so 3 tiles always fit.
   const [gridW, setGridW] = useState(0);
   const tile = Math.floor(((gridW || Math.min(width, 520) - S.page * 2) - 2 * GRID_GAP) / 3);
 
   const load = useCallback((force: boolean) => {
     setError(null);
-    setLoadingCatalog(cachedCatalog().length === 0 || force);
-    setLoadingPicks(true);
-    Promise.all([loadCatalog(force), loadPicks(force)])
-      .then(([p, k]) => { setProducts(p); setPicks(k); })
-      .catch((e) => setError(e instanceof Error ? e.message : 'Không tải được gợi ý.'))
-      .finally(() => { setLoadingCatalog(false); setLoadingPicks(false); });
-  }, []);
+    setLoadState({ key: picksCacheKey, catalogLoading: cachedCatalog().length === 0 || force, picksLoading: true });
+    Promise.all([loadCatalog(force), loadPicks(force, picksCacheKey)])
+      .then(([p, k]) => {
+        if (picksKeyRef.current !== picksCacheKey) return;
+        setProducts(p);
+        setPickState({ key: picksCacheKey, values: k });
+      })
+      .catch((e) => {
+        if (picksKeyRef.current === picksCacheKey) setError(e instanceof Error ? e.message : 'Không tải được gợi ý.');
+      })
+      .finally(() => {
+        if (picksKeyRef.current === picksCacheKey) setLoadState({ key: picksCacheKey, catalogLoading: false, picksLoading: false });
+      });
+  }, [picksCacheKey]);
 
   useEffect(() => { load(false); }, [load]);
 
@@ -52,13 +74,6 @@ export function ShopCatalog({ items, profile, onOpenStudio }: { items: Item[]; p
   const openId = open?.id;
   const current = useRef<string | undefined>(undefined);
   // A match is generated against the current wardrobe, so product ID alone is not a safe cache key.
-  const wardrobeKey = items
-    .map((item) => [item.id, item.name, item.kind, item.color_name ?? '', item.material ?? ''].join('|'))
-    .sort()
-    .join(',');
-  // The backend prompt also includes these profile fields, so edits must invalidate cached matches.
-  const profileKey = [profile.wear, profile.job, profile.dress_code, profile.height_cm, profile.weight_kg,
-    profile.proportion, profile.fit_pref, [...profile.styles].sort().join('|')].join(':');
   const loadMatch = useCallback((id: string) => {
     const requestKey = `${profileKey}:${wardrobeKey}:${id}`;
     current.current = requestKey;
@@ -88,6 +103,7 @@ export function ShopCatalog({ items, profile, onOpenStudio }: { items: Item[]; p
   const why = new Map(picks.map((p) => [p.id, p.why]));
   const picked = picks.map((p) => products.find((x) => x.id === p.id)).filter((x): x is Product => !!x);
   const kinds = FILTERS.find((f) => f.key === filter)!.kinds;
+  const categoryProducts = products.filter((p) => filter === 'all' || kinds.includes(p.kind));
   const rest = products.filter((p) => !why.has(p.id) && (filter === 'all' || kinds.includes(p.kind)));
 
   const grid = (list: Product[]) => (
@@ -162,8 +178,15 @@ export function ShopCatalog({ items, profile, onOpenStudio }: { items: Item[]; p
             ) : null}
           </View>
         )}
-        ListEmptyComponent={products.length ? (
-          <Text style={[T.sub, { textAlign: 'center', padding: 16 }]}>Chưa có sản phẩm ở nhóm này.</Text>
+        ListEmptyComponent={!loadingCatalog && !error && categoryProducts.length === 0 ? (
+          products.length ? (
+            <Text style={[T.sub, { textAlign: 'center', padding: 16 }]}>Chưa có sản phẩm ở nhóm này.</Text>
+          ) : (
+            <View style={{ alignItems: 'center', gap: 10, padding: 16 }}>
+              <Text style={[T.sub, { textAlign: 'center' }]}>Shop hiện chưa có sản phẩm.</Text>
+              <Button title="Tải lại sản phẩm" kind="outline" onPress={() => load(true)} loading={loadingPicks} />
+            </View>
+          )
         ) : undefined}
         renderItem={({ item: p }) => (
           <Pressable onPress={() => setOpen(p)} accessibilityRole="button" accessibilityLabel={`${p.name}, ${money(p.price)}`}

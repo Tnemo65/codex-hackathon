@@ -24,6 +24,45 @@ Improve the real mobile experience by fixing observed interaction and reliabilit
 - One browser performance trace under Fast 3G and 2× CPU slowdown recorded LCP 8.036 s and CLS 0.01. The LCP was text with 8.028 s render delay; this is a throttled Expo Web development measurement, not an iPhone/release baseline.
 - The browser flow created a throwaway anonymous profile on the configured backend using default demo measurements. It added no wardrobe photos/items and no outfit plan. The API has no profile-delete action, so the profile remains on that backend.
 
+## Field-by-field optimization pass (2026-11-16)
+
+The follow-up pass split the app into three screen fields plus shared app/API integration. Each field was audited independently, implemented by its owner, then reviewed for integration regressions.
+
+### Daily experience: Today, Calendar, Stylist
+
+- Today now surfaces an accessible error and retry when weather cannot be loaded for a small closet; it no longer silently falls through to a misleading empty state.
+- Switching Calendar from month to week anchors the week on the selected date.
+- Stylist plan and chat failures use alert semantics so assistive technology announces the failure.
+- Long chat history remains unvirtualized until native profiling demonstrates a measurable rendering problem.
+
+### Wardrobe and shopping: Wardrobe, ReviewItem, ShopCatalog
+
+- A successful item write and a failed list refresh are handled as separate outcomes. Retry reloads the list without repeating the item write, and the review flow stays mounted through an empty-closet refresh error.
+- Cut-out polling now schedules its next list request after the prior request settles, preventing overlapping calls on slow connections.
+- An empty successful shop catalog has an explanation and reload action. The category empty state checks the selected category's products, so recommended products shown in the header do not produce a contradictory “no products” message.
+- AI picks are cached per profile and wardrobe inputs. Catalog and identical in-flight pick requests are shared; stale pick responses cannot replace the current profile/wardrobe result.
+- Inventory refresh errors remain visible in Wardrobe rather than replacing and unmounting the screen at the app root.
+
+### Onboarding, Profile, Studio, and TryOn
+
+- Final onboarding save disables Back and Skip while pending; editing the restore code clears its stale error.
+- Profile save feedback is tied to the edit revision, so a response cannot mark newer unsaved edits as saved.
+- Studio's failed shop-link action retries opening the link, not the unrelated “use today” action.
+- TryOn retains a known pending job after transient status failures and after “Dừng chờ”. Re-entering the screen or retrying the same device/outfit during the current app session shares an in-flight create request and resumes its job ID; changing the outfit or accepted body-photo revision selects a different job key.
+- Consent, uploaded-body availability, and pending TryOn job keys are scoped by device ID. A response lost after the server creates a TryOn job still cannot be made idempotent without a client/server request key and server-side contract.
+
+### Shared app and API integration
+
+- Inventory responses are guarded by a request generation. Starting restore invalidates older inventory requests, and only the latest request may update items, loading, or error state.
+- Identical in-flight weather requests share one fetch; catalog and picks requests also use single-flight behavior.
+
+### Verification evidence
+
+- `npm run typecheck` passes; `npx expo export --platform web --output-dir .scratch/perf-web-20261116` completes with an 811 KB web JavaScript bundle. Expo Doctor passed 20/20 earlier in this optimization pass.
+- Isolated local Expo Web checks ran at 390×844 with Fast 3G and 2× CPU slowdown. The app had no horizontal overflow and no external origins in the isolated mocked run.
+- Mocked browser flows verified that changing a saved profile causes one new catalog-pick request; a delayed old-device `items.list` response cannot replace the restored closet; recommending every product does not show the category empty message; and stopping/retrying TryOn does not issue a second create request for the same outfit.
+- Emulation was briefly reconfigured on a non-isolated browser page, which reloaded without the fetch mock and made one read-only `profile.get` request to the configured Supabase endpoint (HTTP 200). The isolated mocked run after that made no external requests. No profile save, item mutation, or live AI request was made by that accidental read.
+
 ## Prioritized plan
 
 ### P0 — Finish end-to-end acceptance on an installed iPhone
