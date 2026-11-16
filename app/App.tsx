@@ -36,6 +36,7 @@ export default function App() {
   const [onboarding, setOnboarding] = useState(false);
   const [items, setItems] = useState<Item[]>([]);
   const [itemsLoading, setItemsLoading] = useState(false);
+  const [itemsError, setItemsError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>('today');
   const [tryOnIds, setTryOnIds] = useState<string[]>([]);
   const [tryOnFrom, setTryOnFrom] = useState<Tab>('today');
@@ -49,6 +50,7 @@ export default function App() {
 
   const loadItems = useCallback(async () => {
     setItemsLoading(true);
+    setItemsError(null);
     try {
       const fresh = (await api.itemsList()).items;
       // Signed URLs change on every list call; keep the URLs we already loaded when the picture is unchanged
@@ -60,6 +62,9 @@ export default function App() {
           return o && !!o.cutout_url === !!i.cutout_url ? { ...i, image_url: o.image_url, cutout_url: o.cutout_url } : i;
         });
       });
+    } catch (e) {
+      setItemsError(e instanceof Error ? e.message : 'Không tải được tủ đồ.');
+      throw e;
     } finally {
       setItemsLoading(false);
     }
@@ -68,13 +73,21 @@ export default function App() {
   const boot = useCallback(async () => {
     setBooting(true);
     setBootError(null);
+    setItems([]);
+    setItemsError(null);
     try {
-      setRemoveBg((await AsyncStorage.getItem(REMOVE_BG_KEY)) !== '0'); // background removal is on unless switched off
-      const { profile: p, restore_code } = await api.profileGet();
+      // These reads are independent. Start the local preference read while the first API call
+      // initializes the device ID and fetches the profile.
+      const [removeBgValue, { profile: p, restore_code }] = await Promise.all([
+        AsyncStorage.getItem(REMOVE_BG_KEY),
+        api.profileGet(),
+      ]);
+      setRemoveBg(removeBgValue !== '0'); // background removal is on unless switched off
       setProfile(p);
       setRestoreCode(restore_code);
       setOnboarding(!p);
-      if (p) await loadItems();
+      // Let the app shell and Today plan request start while the wardrobe is loading.
+      if (p) void loadItems().catch(() => {});
     } catch (e) {
       setBootError(e instanceof Error ? e.message : 'Không kết nối được máy chủ.');
     } finally {
@@ -134,12 +147,11 @@ export default function App() {
         profile={profile}
         initialItemIds={tryOnIds}
         onBack={() => setTab(tryOnFrom)}
-        onUseToday={(ids) => {
+        onUseToday={async (ids) => {
           const outfit = { item_ids: ids, name: 'Bộ đã mặc thử', why: 'Bạn chọn bộ này sau khi xem ảnh phối.', fit_note: '', warnings: [] };
-          void api.planSet(todayStr(0), 'planned', outfit).catch(() => {}).then(() => {
-            setTodayKey((k) => k + 1);
-            setTab('today');
-          });
+          await api.planSet(todayStr(0), 'planned', outfit);
+          setTodayKey((k) => k + 1);
+          setTab('today');
         }}
       />
     );
@@ -176,22 +188,29 @@ export default function App() {
           key={todayKey}
           profile={profile}
           items={items}
+          itemsLoading={itemsLoading}
+          itemsError={itemsError}
+          onRetryItems={() => { void loadItems().catch(() => {}); }}
           onOpenTryOn={openTryOn}
           onGoWardrobe={() => setTab('wardrobe')}
           onItemsChanged={() => void loadItems().catch(() => {})}
         />
       ) : (
-        <Wardrobe items={items} loading={itemsLoading} removeBg={removeBg} onReload={loadItems} autoAdd={autoAdd} onAutoAddHandled={() => setAutoAdd(null)} onOpenProfile={openProfile} onOpenStudio={() => setTab('studio')} />
+        itemsError && items.length === 0 ? (
+          <View style={{ flex: 1, justifyContent: 'center', padding: 20 }}><ErrorBox message={itemsError} onRetry={() => { void loadItems().catch(() => {}); }} /></View>
+        ) : (
+          <Wardrobe items={items} profile={profile} loading={itemsLoading} removeBg={removeBg} onReload={loadItems} autoAdd={autoAdd} onAutoAddHandled={() => setAutoAdd(null)} onOpenProfile={openProfile} onOpenStudio={() => setTab('studio')} />
+        )
       )}
     </View>
   )) : null;
 
   return (
-    <View style={{ flex: 1, backgroundColor: C.bg }}>
+    <View accessibilityRole="main" style={{ flex: 1, backgroundColor: C.bg }}>
       <View style={{ flex: 1, width: '100%', maxWidth: 520, alignSelf: 'center' }}>
         <View style={{ flex: 1 }}>{body}{kept}</View>
         {showTabs ? (
-          <View style={{ flexDirection: 'row', backgroundColor: C.card, borderTopWidth: 1, borderTopColor: C.line, paddingTop: 12, paddingBottom: 15 + BOTTOM_INSET }}>
+          <View accessibilityRole="tablist" accessibilityLabel="Chuyển màn hình" style={{ flexDirection: 'row', backgroundColor: C.card, borderTopWidth: 1, borderTopColor: C.line, paddingTop: 12, paddingBottom: 15 + BOTTOM_INSET }}>
             {TABS.map((t) => {
               const active = tab === t.id;
               return (

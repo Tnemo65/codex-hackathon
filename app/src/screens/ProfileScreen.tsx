@@ -26,7 +26,11 @@ export default function ProfileScreen({ profile, restoreCode, removeBg, onToggle
   const [rError, setRError] = useState<string | null>(null);
 
   const set = <K extends keyof Profile>(k: K, v: Profile[K]) => { setSaved(false); setP((x) => ({ ...x, [k]: v })); };
-  const styles = p.wear === 'm' ? STYLES_M : STYLES_F;
+  const styles = p.wear === 'm'
+    ? STYLES_M
+    : p.wear === 'u'
+      ? [...STYLES_F, ...STYLES_M.filter((style) => !STYLES_F.includes(style))]
+      : STYLES_F;
   const hn = Number(h);
   const wn = Number(w);
   const hBad = !(hn >= 120 && hn <= 210);
@@ -65,12 +69,12 @@ export default function ProfileScreen({ profile, restoreCode, removeBg, onToggle
           <View style={{ flex: 1, gap: 4 }}>
             <Label text="Chiều cao (cm)" />
             <TextInput value={h} onChangeText={(v) => { setSaved(false); setH(v.replace(/[^0-9]/g, '')); }} keyboardType="number-pad" style={[input, hBad && { borderColor: C.danger }]} accessibilityLabel="Chiều cao" />
-            {hBad ? <Text style={{ fontSize: 12, color: C.danger }}>Từ 120 đến 210</Text> : null}
+            {hBad ? <Text accessibilityLiveRegion="polite" style={{ fontSize: 12, color: C.danger }}>Từ 120 đến 210</Text> : null}
           </View>
           <View style={{ flex: 1, gap: 4 }}>
             <Label text="Cân nặng (kg)" />
             <TextInput value={w} onChangeText={(v) => { setSaved(false); setW(v.replace(/[^0-9]/g, '')); }} keyboardType="number-pad" style={[input, wBad && { borderColor: C.danger }]} accessibilityLabel="Cân nặng" />
-            {wBad ? <Text style={{ fontSize: 12, color: C.danger }}>Từ 30 đến 150</Text> : null}
+            {wBad ? <Text accessibilityLiveRegion="polite" style={{ fontSize: 12, color: C.danger }}>Từ 30 đến 150</Text> : null}
           </View>
         </View>
         <Label text="Tỉ lệ cơ thể" />
@@ -89,17 +93,17 @@ export default function ProfileScreen({ profile, restoreCode, removeBg, onToggle
         <Wrap>{styles.map((s) => <Chip key={s} label={s} selected={p.styles.includes(s)} onPress={() => set('styles', toggle(p.styles, s))} />)}</Wrap>
       </Card>
 
-      {error ? <Text style={{ color: C.danger, fontSize: 13 }}>{error}</Text> : null}
+        {error ? <Text accessibilityRole="alert" style={{ color: C.danger, fontSize: 13 }}>{error}</Text> : null}
       <Button title="Lưu hồ sơ" onPress={save} loading={busy} />
-      {saved ? <Text style={{ color: C.ok, fontSize: 13, fontWeight: '600', textAlign: 'center' }}>Đã lưu</Text> : null}
+        {saved ? <Text accessibilityLiveRegion="polite" style={{ color: C.ok, fontSize: 13, fontWeight: '600', textAlign: 'center' }}>Đã lưu</Text> : null}
 
       <Card style={{ gap: 8 }}>
         <Text style={T.h2}>Mã khôi phục</Text>
         <Text selectable style={{ fontSize: 28, fontWeight: '800', letterSpacing: 3, color: C.wine }}>{restoreCode ?? '—'}</Text>
         <Text style={T.sub}>Dùng mã này để mở lại tủ đồ trên máy khác.</Text>
         <CodeSlots value={code} onChange={(v) => { setRError(null); setCode(v); }} invalid={!!rError} />
-        {rError ? <Text style={{ color: C.danger, fontSize: 13 }}>{rError}</Text> : null}
-        <Button title="Khôi phục" kind="secondary" onPress={restore} loading={rBusy} />
+          {rError ? <Text accessibilityRole="alert" style={{ color: C.danger, fontSize: 13 }}>{rError}</Text> : null}
+          <Button title="Khôi phục" kind="secondary" onPress={restore} loading={rBusy} disabled={!code.trim()} />
       </Card>
 
       <Card style={{ gap: 8 }}>

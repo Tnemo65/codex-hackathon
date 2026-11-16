@@ -1,5 +1,5 @@
 // "Stylist" tab: full-screen chat with the AI stylist about today's outfit (real outfit.edit backend).
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { api, todayStr } from '../api';
 import { C, R, S, T } from '../theme';
@@ -38,6 +38,7 @@ export default function Stylist({ items, profile, onOpenTryOn, onPlanChanged, on
   const [msgs, setMsgs] = useState<Msg[]>(history);
   const [plan, setPlan] = useState<Plan | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [planError, setPlanError] = useState<string | null>(null);
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const scroller = useRef<React.ComponentRef<typeof ScrollView>>(null);
@@ -47,11 +48,20 @@ export default function Stylist({ items, profile, onOpenTryOn, onPlanChanged, on
   function push(m: Msg) { history = [...history, m]; setMsgs(history); }
   function drop(id: number) { history = history.filter((m) => m.id !== id); setMsgs(history); }
 
-  useEffect(() => {
-    let alive = true;
-    api.planGet(todayStr()).then((r) => { if (alive) setPlan(r.plan); }).catch(() => {}).finally(() => { if (alive) setLoaded(true); });
-    return () => { alive = false; };
+  const loadPlan = useCallback(async () => {
+    setLoaded(false);
+    setPlanError(null);
+    try {
+      const r = await api.planGet(todayStr());
+      setPlan(r.plan);
+    } catch (e) {
+      setPlanError(errText(e));
+    } finally {
+      setLoaded(true);
+    }
   }, []);
+
+  useEffect(() => { void loadPlan(); }, [loadPlan]);
 
   async function send(raw: string, addUser = true) {
     const q = raw.trim().slice(0, 300);
@@ -80,7 +90,12 @@ export default function Stylist({ items, profile, onOpenTryOn, onPlanChanged, on
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <Screen title="Stylist" subtitle="Tư vấn từ đồ bạn đang có" right={avatar} scroll={false}>
         <View style={st.outfitCard}>
-          {!loaded ? <ActivityIndicator color={C.wine} /> : outfit ? (
+          {!loaded ? <ActivityIndicator color={C.wine} /> : planError ? (
+            <View style={{ gap: 8 }}>
+              <Text style={{ fontSize: 13, color: C.danger }}>{planError}</Text>
+              <Button title="Thử tải lại outfit" kind="outline" onPress={() => void loadPlan()} />
+            </View>
+          ) : outfit ? (
             <>
               <Text style={[T.h2, { fontSize: 16 }]} numberOfLines={1}>{outfit.name}</Text>
               <Thumbs ids={outfit.item_ids} byId={byId} size={48} />
@@ -123,7 +138,7 @@ export default function Stylist({ items, profile, onOpenTryOn, onPlanChanged, on
         </ScrollView>
 
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0 }} contentContainerStyle={{ gap: 8 }} keyboardShouldPersistTaps="handled">
-          {QUICK.map((q) => <Chip key={q} label={q} onPress={() => void send(q)} />)}
+          {QUICK.map((q) => <Chip key={q} label={q} disabled={busy} onPress={() => void send(q)} />)}
         </ScrollView>
 
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingBottom: 12 }}>

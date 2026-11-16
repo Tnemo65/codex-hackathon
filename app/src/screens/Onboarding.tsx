@@ -159,8 +159,8 @@ export default function Onboarding({ initial, onDone, onRestore }: {
             {restoreOpen ? (
               <View style={{ gap: 8 }}>
                 <CodeSlots value={code} onChange={setCode} invalid={!!restoreErr} />
-                {restoreErr ? <Text style={{ fontSize: 13, color: C.danger }}>{restoreErr}</Text> : null}
-                <Button title="Khôi phục" kind="secondary" onPress={restore} loading={restoring} disabled={!code.trim()} />
+                {restoreErr ? <Text accessibilityRole="alert" style={{ fontSize: 13, color: C.danger }}>{restoreErr}</Text> : null}
+            <Button title="Khôi phục" kind="secondary" onPress={restore} loading={restoring} disabled={!code.trim()} />
               </View>
             ) : null}
           </>
@@ -172,7 +172,7 @@ export default function Onboarding({ initial, onDone, onRestore }: {
               <Field label="Chiều cao" value={hs} unit="cm" onChange={setHs} bad={hs !== '' && !hOk} />
               <Field label="Cân nặng" value={ws} unit="kg" onChange={setWs} bad={ws !== '' && !wOk} />
             </View>
-            {(hs !== '' && !hOk) || (ws !== '' && !wOk) ? <Text style={{ fontSize: 12, color: C.danger }}>Chiều cao 120-210 cm, cân nặng 30-150 kg.</Text> : null}
+            {(hs !== '' && !hOk) || (ws !== '' && !wOk) ? <Text accessibilityLiveRegion="polite" style={{ fontSize: 12, color: C.danger }}>Chiều cao 120-210 cm, cân nặng 30-150 kg.</Text> : null}
             <Group title="Tỷ lệ cơ thể">
               <View style={{ flexDirection: 'row', gap: 8 }}>
                 {(Object.keys(PROPORTION_LABEL) as Proportion[]).map((k) => {
@@ -195,7 +195,7 @@ export default function Onboarding({ initial, onDone, onRestore }: {
             </Group>
             <Group title="Bạn hay cần outfit cho">
               <View style={row}>{OCCASIONS.map((o) => <Chip key={o} label={o} selected={p.occasions.includes(o)} onPress={() => set({ occasions: toggle(p.occasions, o) })} />)}</View>
-              {p.occasions.length === 0 ? <Text style={{ fontSize: 12, color: C.danger }}>Chọn ít nhất một dịp.</Text> : null}
+                {p.occasions.length === 0 ? <Text accessibilityLiveRegion="polite" style={{ fontSize: 12, color: C.danger }}>Chọn ít nhất một dịp.</Text> : null}
             </Group>
           </>
         ) : null}
@@ -229,7 +229,7 @@ export default function Onboarding({ initial, onDone, onRestore }: {
       <View style={{ padding: S.page, paddingTop: 8, paddingBottom: 12 + BOTTOM_INSET, gap: 8, backgroundColor: C.pinkSoft }}>
         {err ? (
           <View style={{ gap: 4 }}>
-            <Text style={{ fontSize: 13, color: C.danger }}>{err}</Text>
+              <Text accessibilityRole="alert" style={{ fontSize: 13, color: C.danger }}>{err}</Text>
             <Text style={{ fontSize: 12, color: C.sub }}>Bấm nút lại để thử lại.</Text>
           </View>
         ) : null}

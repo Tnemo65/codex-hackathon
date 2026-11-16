@@ -47,8 +47,8 @@ function optionList(p: Plan | null, at = 0): Outfit[] {
   return list;
 }
 
-export default function Today({ profile, items, onOpenTryOn, onGoWardrobe, onItemsChanged }: {
-  profile: Profile; items: Item[]; onOpenTryOn: (itemIds: string[]) => void; onGoWardrobe: () => void; onItemsChanged: () => void;
+export default function Today({ profile, items, itemsLoading, itemsError, onRetryItems, onOpenTryOn, onGoWardrobe, onItemsChanged }: {
+  profile: Profile; items: Item[]; itemsLoading: boolean; itemsError: string | null; onRetryItems: () => void; onOpenTryOn: (itemIds: string[]) => void; onGoWardrobe: () => void; onItemsChanged: () => void;
 }) {
   const { width: winW } = useWindowDimensions();
   const boxW = Math.min(winW, 520) - S.page * 2;
@@ -60,6 +60,7 @@ export default function Today({ profile, items, onOpenTryOn, onGoWardrobe, onIte
   const [idx, setIdx] = useState(0);
   const [weather, setWeather] = useState<Weather | null>(null);
   const [empty, setEmpty] = useState(false);
+  const [inventoryCheckPending, setInventoryCheckPending] = useState(false);
   const [mode, setMode] = useState<'canvas' | 'body'>('body'); // Figma opens on the model photo
   const [occasion, setOccasion] = useState(profile.occasions[0] ?? 'Đi làm');
   const [commute, setCommute] = useState<Commute>(profile.commute);
@@ -70,6 +71,9 @@ export default function Today({ profile, items, onOpenTryOn, onGoWardrobe, onIte
   const [note, setNote] = useState('');
   const [picker, setPicker] = useState<'occasion' | 'commute' | null>(null);
   const [chatOpen, setChatOpen] = useState(false);
+  const [chatPreparing, setChatPreparing] = useState(false);
+  const [chatError, setChatError] = useState<string | null>(null);
+  const chatPrepRef = useRef(false);
   const [aiDone, setAiDone] = useState<string | null>(null); // "Đã phối 3 bộ trong 6,2s", only for a suggestion made just now
   const req = useRef(0);
   const retry = useRef<() => void>(() => {});
@@ -78,8 +82,6 @@ export default function Today({ profile, items, onOpenTryOn, onGoWardrobe, onIte
 
   const kinds = new Set(items.map((i) => i.kind));
   const tooSmall = items.length < 3 || !((kinds.has('top') && kinds.has('bottom')) || kinds.has('dress'));
-  const small = useRef(tooSmall);
-  small.current = tooSmall;
 
   const list = optionList(plan, slot);
   const viewed = list[idx] ?? null;
@@ -115,7 +117,7 @@ export default function Today({ profile, items, onOpenTryOn, onGoWardrobe, onIte
 
   function load() {
     void guard('Đang mở kế hoạch…', load, async (alive) => {
-      setPlan(null); setWeather(null); setEmpty(false); setNote(''); setSaveErr(null);
+      setPlan(null); setWeather(null); setEmpty(false); setInventoryCheckPending(false); setNote(''); setSaveErr(null);
       const { plan: p } = await api.planGet(date);
       if (!alive()) return;
       if (p) {
@@ -124,19 +126,24 @@ export default function Today({ profile, items, onOpenTryOn, onGoWardrobe, onIte
         applyPlan(p, 0);
         return;
       }
-      if (small.current) {
-        setEmpty(true);
-        api.weatherGet(date).then((r) => { if (alive()) setWeather(r.weather); }).catch(() => {});
-        return;
-      }
-      setBusy(AI_BUSY);
-      const t0 = Date.now();
-      const { plan: s } = await api.outfitSuggest(date, occasion, commute);
-      if (alive()) { applyPlan(s, 0); setAiDone(doneText(s, t0)); }
+      // Initial [] is unresolved inventory, not an empty closet.
+      setInventoryCheckPending(true);
     });
   }
 
   useEffect(load, [date]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!inventoryCheckPending || itemsLoading || itemsError) return;
+    // Resolve the pending no-plan branch only after inventory hydration has settled.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setInventoryCheckPending(false);
+    if (tooSmall) {
+      setEmpty(true);
+      api.weatherGet(date).then((r) => { if (date === dateRef.current) setWeather(r.weather); }).catch(() => {});
+    } else {
+      suggest();
+    }
+  }, [inventoryCheckPending, itemsLoading, itemsError, tooSmall]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (empty && !tooSmall) suggest(); }, [tooSmall, empty]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function confirm() {
@@ -154,6 +161,7 @@ export default function Today({ profile, items, onOpenTryOn, onGoWardrobe, onIte
   }
 
   function pick(kind: 'occasion' | 'commute', value: string) {
+    if (busy) return;
     setPicker(null);
     const occ = kind === 'occasion' ? value : occasion;
     const com = kind === 'commute' ? (value as Commute) : commute;
@@ -164,11 +172,23 @@ export default function Today({ profile, items, onOpenTryOn, onGoWardrobe, onIte
 
   // The server edits its selected outfit, so make the option on screen the selected one before chatting.
   async function openChat() {
-    if (viewed && plan && plan.status === 'suggested' && key(viewed) !== key(plan.outfit)) {
-      const r = await api.planSet(date, 'suggested', viewed).catch(() => null);
-      if (r && date === dateRef.current) applyPlan(r.plan);
+    if (chatPrepRef.current) return;
+    chatPrepRef.current = true;
+    setChatPreparing(true); setChatError(null);
+    const d = date;
+    try {
+      if (viewed && plan && plan.status === 'suggested' && key(viewed) !== key(plan.outfit)) {
+        const { plan: saved } = await api.planSet(d, 'suggested', viewed);
+        if (d !== dateRef.current) return;
+        applyPlan(saved);
+      }
+      if (d === dateRef.current) setChatOpen(true);
+    } catch (e) {
+      if (d === dateRef.current) setChatError(errText(e));
+    } finally {
+      chatPrepRef.current = false;
+      setChatPreparing(false);
     }
-    setChatOpen(true);
   }
 
   const go = (n: number) => { setIdx((i) => (i + n + list.length) % list.length); setNote(''); setSaveErr(null); };
@@ -242,10 +262,10 @@ export default function Today({ profile, items, onOpenTryOn, onGoWardrobe, onIte
         {viewed?.warnings?.[0] ? <Banner text={viewed.warnings[0]} /> : null}
 
         <View style={{ flexDirection: 'row', gap: 8 }}>
-          <Pressable onPress={() => setPicker('occasion')} disabled={isToday && worn} accessibilityRole="button" accessibilityLabel={`Dịp: ${occasion}. Chạm để đổi`} style={st.ctx}>
+          <Pressable onPress={() => setPicker('occasion')} disabled={busy !== null || isToday && worn} accessibilityRole="button" accessibilityLabel={`Dịp ${occasion}`} accessibilityHint="Chạm để đổi" style={[st.ctx, busy !== null && { opacity: 0.55 }]}>
             <Text style={T.small}>Dịp</Text><Text style={st.ctxText} numberOfLines={1}>{occasion}</Text>
           </Pressable>
-          <Pressable onPress={() => setPicker('commute')} disabled={isToday && worn} accessibilityRole="button" accessibilityLabel={`Di chuyển: ${COMMUTE_LABEL[commute]}. Chạm để đổi`} style={st.ctx}>
+          <Pressable onPress={() => setPicker('commute')} disabled={busy !== null || isToday && worn} accessibilityRole="button" accessibilityLabel={`Di chuyển ${COMMUTE_LABEL[commute]}`} accessibilityHint="Chạm để đổi" style={[st.ctx, busy !== null && { opacity: 0.55 }]}>
             <Text style={T.small}>Di chuyển</Text><Text style={st.ctxText} numberOfLines={1}>{COMMUTE_LABEL[commute]}</Text>
           </Pressable>
         </View>
@@ -257,7 +277,9 @@ export default function Today({ profile, items, onOpenTryOn, onGoWardrobe, onIte
             `Cân nhắc ${items.length} món cho dịp ${occasion} (${COMMUTE_LABEL[commute]})`,
             `Phối 3 bộ hợp dáng cao ${profile.height_cm} cm`,
           ]} />
-        ) : busy ? <Loading text={busy} /> : err ? <ErrorBox message={err} onRetry={() => retry.current()} /> : empty ? (
+        ) : busy ? <Loading text={busy} /> : err ? <ErrorBox message={err} onRetry={() => retry.current()} /> : itemsError && items.length === 0 ? (
+          <ErrorBox message={itemsError} onRetry={onRetryItems} />
+        ) : itemsLoading && items.length === 0 ? <Loading text="Đang tải tủ đồ…" /> : inventoryCheckPending ? <Loading text="Đang kiểm tra tủ đồ…" /> : empty ? (
           <Card style={{ gap: 10 }}>
             <Text style={T.h2}>Tủ đồ chưa đủ để phối</Text>
             <Text style={T.sub}>Cần ít nhất 3 món, có áo và quần hoặc chân váy, hoặc một váy liền.</Text>
@@ -342,8 +364,9 @@ export default function Today({ profile, items, onOpenTryOn, onGoWardrobe, onIte
                 <Button title={primaryTitle} kind={confirmedHere ? 'outline' : 'primary'} icon={confirmedHere ? 'check' : undefined}
                   disabled={confirmedHere || (isToday && worn)} loading={saving} onPress={confirm} />
               </Animated.View>
-              <Button title="Chat" kind="secondary" icon="chat" onPress={() => void openChat()} style={{ flex: 1 }} />
+              <Button title="Chat" kind="secondary" icon="chat" loading={chatPreparing} onPress={() => void openChat()} style={{ flex: 1 }} />
             </View>
+            {chatError ? <ErrorBox message={chatError} onRetry={() => void openChat()} /> : null}
             {saveErr ? <ErrorBox message={saveErr} onRetry={confirm} /> : null}
             {!(isToday && worn) ? (
               <Pressable onPress={() => suggest()} accessibilityRole="button" accessibilityLabel="Gợi ý lại" style={st.textBtn}>

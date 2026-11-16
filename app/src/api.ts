@@ -127,7 +127,8 @@ export type DayWeather = { t_min: number; t_max: number; rain_pct: number; cond:
 const rangeCache = new Map<string, { at: number; data: Record<string, DayWeather> }>();
 
 // Daily forecast for a date range, keyed by YYYY-MM-DD. Open-Meteo serves ~92 days back .. 16 days ahead.
-// Never throws: on any failure returns {} so the calendar still works.
+// Returns {} only when the requested range is entirely outside the supported forecast window.
+// Network and HTTP failures reject so the Calendar can show a retry instead of a false empty state.
 export async function fetchWeatherRange(from: string, to: string, city = 'Hà Nội'): Promise<Record<string, DayWeather>> {
   const place = PLACES[city] ? city : 'Hà Nội';
   const shift = (n: number) => { const d = new Date(); d.setDate(d.getDate() + n); return `${d.getFullYear()}-${`${d.getMonth() + 1}`.padStart(2, '0')}-${`${d.getDate()}`.padStart(2, '0')}`; };
@@ -158,7 +159,7 @@ export async function fetchWeatherRange(from: string, to: string, city = 'Hà N�
     rangeCache.set(key, { at: Date.now(), data: out });
     return out;
   } catch {
-    return {};
+    throw new Error('Chưa lấy được dự báo thời tiết, thử lại nhé.');
   } finally {
     clearTimeout(timer);
   }

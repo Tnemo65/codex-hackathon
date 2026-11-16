@@ -44,6 +44,11 @@ Lệnh tự sinh thư mục `ios/` và build (lần đầu ~10–15 phút). Ch�
 - [ ] Vuốt tắt hẳn app → mở lại → bấm lại → có kết quả.
 - [ ] Thử bằng mạng sẽ dùng lúc demo. Hotspot iPhone lúc 13:35 **chặn `*.supabase.co`**; kiểm tra nhanh: mở `https://aivyffaeerowlxmkgxxz.supabase.co/functions/v1/api` trên Safari, phải hiện lỗi JSON ngay (không xoay mãi).
 
-## Cập nhật code
+## Cập nhật code (không cần build lại)
 
-Bạn kia push code mới → `git pull` → `npm ci` (nếu `package.json` đổi) → chạy lại lệnh build Release. Không xoá `ios/` trừ khi thêm thư viện native mới (khi đó chạy `npx expo prebuild -p ios --clean` trước).
+Bản Release đã cài nhận code JS mới qua EAS Update (kênh `preview`, cùng runtime `exposdk:58.0.0`). Chỉ đổi code JS/TS → **không build lại trên Mac**:
+
+1. Máy Windows chạy `npm run ship -- "mô tả"` (khoảng 1 phút).
+2. Trên iPhone: mở app (app tải bản mới ngầm) → vuốt tắt hẳn → mở lại → đang chạy bản mới.
+
+Chỉ build lại khi **thêm/xoá thư viện native** hoặc sửa `app.json` phần native (icon, quyền, bundle ID): `git pull` → `npm ci` → `npx expo prebuild -p ios --clean` → lệnh build Release. Lần build lại không `--clean` sẽ build tăng dần (vài phút), nên đừng xoá `ios/` hay DerivedData khi không cần. `--clean` cũng xoá phần chỉnh signing trong Xcode, phải chọn lại Team.

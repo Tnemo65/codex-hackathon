@@ -1,15 +1,14 @@
 // "Tủ đồ" screen: grid, filter, add-item sheet, and navigation into ReviewItem.
 import React, { useEffect, useRef, useState } from 'react';
-import { Animated, Easing, Image, Pressable, Text, TextInput, View, useWindowDimensions } from 'react-native';
+import { FlatList, Image, Pressable, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { api } from '../api';
 import { ShopCatalog } from '../components/ShopCatalog';
 import { StatusMark } from '../components/StatusMark';
 import { ThoughtLine } from '../components/ThoughtLine';
 import { UndoToast } from '../components/UndoToast';
-import { useReduceMotion } from '../motion';
 import { pickPhoto, takePhoto, type Photo } from '../photo';
 import { C, R, S, T } from '../theme';
-import { type Detection, type Item, type Kind } from '../types';
+import { type Detection, type Item, type Kind, type Profile } from '../types';
 import { Banner, Button, Card, ErrorBox, Icon, Loading, Screen, Sheet } from '../ui';
 import ReviewItem from './ReviewItem';
 
@@ -22,21 +21,6 @@ const FILTERS: { key: Filter; label: string; kinds: Kind[] }[] = [
 ];
 const GRID_GAP = 10;
 const KIND_LABEL: Record<Kind, string> = { top: 'Áo', bottom: 'Quần / váy', dress: 'Váy liền', outer: 'Áo khoác', shoes: 'Giày', bag: 'Túi' };
-
-// Tile fades and slides up once, staggered by `delay`.
-function Rise({ delay, children }: { delay: number; children: React.ReactNode }) {
-  const reduce = useReduceMotion();
-  const a = useRef(new Animated.Value(reduce ? 1 : 0)).current;
-  useEffect(() => {
-    if (reduce) { a.setValue(1); return; }
-    Animated.timing(a, { toValue: 1, duration: 420, delay, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
-  }, [a, delay, reduce]);
-  return (
-    <Animated.View style={{ opacity: a, transform: [{ translateY: a.interpolate({ inputRange: [0, 1], outputRange: [18, 0] }) }] }}>
-      {children}
-    </Animated.View>
-  );
-}
 
 type Piece = { id: string; name: string; state: 'running' | 'done' | 'failed'; start: number };
 
@@ -60,7 +44,7 @@ function PieceRow({ piece }: { piece: Piece }) {
   );
 }
 
-export default function Wardrobe({ items, loading, removeBg, onReload, autoAdd, onAutoAddHandled, onOpenProfile, onOpenStudio }: { items: Item[]; loading: boolean; removeBg: boolean; onReload: () => Promise<void>; autoAdd: 'camera' | 'library' | null; onAutoAddHandled: () => void; onOpenProfile: () => void; onOpenStudio: () => void }) {
+export default function Wardrobe({ items, profile, loading, removeBg, onReload, autoAdd, onAutoAddHandled, onOpenProfile, onOpenStudio }: { items: Item[]; profile: Profile; loading: boolean; removeBg: boolean; onReload: () => Promise<void>; autoAdd: 'camera' | 'library' | null; onAutoAddHandled: () => void; onOpenProfile: () => void; onOpenStudio: () => void }) {
   const [filter, setFilter] = useState<Filter>('all');
   const [tab, setTab] = useState<'mine' | 'shop'>('mine');
   const [query, setQuery] = useState('');
@@ -72,9 +56,11 @@ export default function Wardrobe({ items, loading, removeBg, onReload, autoAdd, 
   const [added, setAdded] = useState<string | null>(null);
   const [multiWait, setMultiWait] = useState<string[]>([]); // ids of items added from one photo still waiting for their cut-out
   const [error, setError] = useState<string | null>(null);
+  const [errorRetry, setErrorRetry] = useState<(() => void) | null>(null);
   const [review, setReview] = useState<{ item: Item; isNew: boolean } | null>(null);
   const [pieces, setPieces] = useState<Piece[]>([]); // per-item cut-out progress on the multi-item waiting screen
   const [pendingDelete, setPendingDelete] = useState<{ id: string; name: string } | null>(null); // hidden from the grid, deleted when the undo fuse ends
+  const [staleDeleteId, setStaleDeleteId] = useState<string | null>(null); // keep a deleted item hidden until a successful refresh
   const pendingRef = useRef<{ id: string; name: string } | null>(null);
   const [cut, setCut] = useState<{ id: string; url: string | null } | null>(null); // new item and its cut-out once ready
 
@@ -116,12 +102,9 @@ export default function Wardrobe({ items, loading, removeBg, onReload, autoAdd, 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [multiKey]);
 
-  const add = async (picker: () => Promise<Photo | null>) => {
-    setSheet(false);
-    setError(null);
+  const processPhoto = async (photo: Photo) => {
+    setError(null); setErrorRetry(null);
     try {
-      const photo = await picker();
-      if (!photo) return;
       setAdded(null);
       setBusy({ uri: photo.uri, mode: 'detect' });
       const { detections } = await api.itemsDetect(photo.base64);
@@ -135,8 +118,21 @@ export default function Wardrobe({ items, loading, removeBg, onReload, autoAdd, 
       if (removeBg && !item.cutout_url) setCut({ id: item.id, url: null });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Có lỗi xảy ra.');
+      setErrorRetry(() => () => { void processPhoto(photo); });
     } finally {
       setBusy(null);
+    }
+  };
+
+  const add = async (picker: () => Promise<Photo | null>) => {
+    setSheet(false);
+    setError(null); setErrorRetry(null);
+    try {
+      const photo = await picker();
+      if (photo) await processPhoto(photo);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Có lỗi xảy ra.');
+      setErrorRetry(() => () => { void add(picker); });
     }
   };
 
@@ -151,11 +147,33 @@ export default function Wardrobe({ items, loading, removeBg, onReload, autoAdd, 
   const back = () => setReview(null);
 
   // Really delete the item whose undo window ended; on failure show it again with the error.
+  // Refresh can fail after the server has already deleted the item. Keep that failure distinct
+  // from the delete itself so Retry only reloads the wardrobe instead of repeating DELETE.
+  const refreshAfterDelete = async () => {
+    try {
+      await onReload();
+      setStaleDeleteId(null);
+      setError(null);
+      setErrorRetry(null);
+    } catch (e) {
+      const detail = e instanceof Error ? e.message : 'Có lỗi xảy ra.';
+      setError(`Đã xoá món đồ. Chưa tải lại được tủ: ${detail}`);
+      setErrorRetry(() => refreshAfterDelete);
+    }
+  };
+
   const commitDelete = (p: { id: string; name: string }) => {
+    setError(null); setErrorRetry(null);
     if (pendingRef.current?.id === p.id) pendingRef.current = null;
     api.itemDelete(p.id)
-      .then(() => onReload())
-      .catch((e) => { setError(e instanceof Error ? e.message : 'Không xoá được món đồ.'); })
+      .then(() => {
+        setStaleDeleteId(p.id);
+        void refreshAfterDelete();
+      })
+      .catch((e) => {
+        setError(e instanceof Error ? e.message : 'Không xoá được món đồ.');
+        setErrorRetry(() => () => commitDelete(p));
+      })
       .finally(() => setPendingDelete((cur) => (cur?.id === p.id ? null : cur)));
   };
   const startDelete = (item: Item) => {
@@ -170,7 +188,7 @@ export default function Wardrobe({ items, loading, removeBg, onReload, autoAdd, 
   const addPicked = async () => {
     if (!scan) return;
     const { photo, detections, picked } = scan;
-    setError(null);
+    setError(null); setErrorRetry(null);
     setBusy({ uri: photo.uri, mode: 'split' });
     try {
       const { items: created } = await api.itemsAddMany(photo.base64, detections.filter((_, i) => picked[i]), removeBg);
@@ -197,6 +215,7 @@ export default function Wardrobe({ items, loading, removeBg, onReload, autoAdd, 
       if (pending.length) setMultiWait(pending);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Có lỗi xảy ra.');
+      setErrorRetry(() => () => { void addPicked(); });
     } finally {
       setBusy(null);
       setPieces([]);
@@ -285,7 +304,7 @@ export default function Wardrobe({ items, loading, removeBg, onReload, autoAdd, 
 
   const kinds = FILTERS.find((f) => f.key === filter)!.kinds;
   const q = query.trim().toLowerCase();
-  const shown = items.filter((i) => i.id !== pendingDelete?.id && (filter === 'all' || kinds.includes(i.kind))
+  const shown = items.filter((i) => i.id !== pendingDelete?.id && i.id !== staleDeleteId && (filter === 'all' || kinds.includes(i.kind))
     && (!q || [i.name, i.category, i.color_name].some((v) => v?.toLowerCase().includes(q))));
   // Measured grid width (a web scrollbar or safe-area makes it narrower than the window), so 3 tiles always fit and fill the row.
   const tile = Math.floor(((gridW || Math.min(width, 520) - S.page * 2) - 2 * GRID_GAP) / 3);
@@ -299,6 +318,7 @@ export default function Wardrobe({ items, loading, removeBg, onReload, autoAdd, 
             <Icon name="user" size={20} color={C.wine} />
           </Pressable>
         )}
+        scroll={false}
         footer={tab === 'mine' ? <Button title="Thêm đồ" onPress={() => setSheet(true)} /> : undefined}>
         <View style={{ flexDirection: 'row', height: 44, backgroundColor: C.card, borderWidth: 1, borderColor: C.line, borderRadius: R.chip, overflow: 'hidden' }}>
           {([['mine', 'Tủ của tôi'], ['shop', 'Gợi ý mua']] as const).map(([k, label]) => (
@@ -308,43 +328,53 @@ export default function Wardrobe({ items, loading, removeBg, onReload, autoAdd, 
             </Pressable>
           ))}
         </View>
-        {tab === 'shop' ? <ShopCatalog items={items} onOpenStudio={onOpenStudio} /> : (
-          <>
-            {error ? <ErrorBox message={error} onRetry={() => setError(null)} /> : null}
-            {added ? <Banner text={added} /> : null}
-            <TextInput value={query} onChangeText={setQuery} placeholder="Tìm trong tủ đồ" placeholderTextColor={C.sub}
-              accessibilityLabel="Tìm trong tủ đồ" autoCorrect={false}
-              style={{ height: 46, backgroundColor: C.card, borderWidth: 1, borderColor: C.line, borderRadius: R.chip + 2, paddingHorizontal: 16, fontSize: 15, color: C.text }} />
-            <View style={{ flexDirection: 'row', gap: 8 }}>
-              {FILTERS.map((f) => (
-                <Pressable key={f.key} onPress={() => setFilter(f.key)} accessibilityRole="button" accessibilityState={{ selected: filter === f.key }}
-                  style={{ flex: 1, minHeight: 44, alignItems: 'center', justifyContent: 'center', borderRadius: R.chip, borderWidth: 1,
-                    backgroundColor: filter === f.key ? C.pink : C.card, borderColor: filter === f.key ? C.pink : C.line }}>
-                  <Text numberOfLines={1} style={{ fontSize: 13, fontWeight: filter === f.key ? '700' : '500', color: filter === f.key ? C.wine : C.text }}>{f.label}</Text>
-                </Pressable>
-              ))}
-            </View>
-            {loading && items.length === 0 ? <Loading text="Đang tải tủ đồ…" /> : null}
-            {!loading && shown.length === 0 ? (
-              <Card style={{ gap: 6, alignItems: 'center', padding: 24 }}>
-                <Text style={T.h2}>{items.length === 0 ? 'Thêm món đồ đầu tiên' : 'Chưa có món nào ở nhóm này'}</Text>
-                <Text style={[T.sub, { textAlign: 'center' }]}>Chụp một món đồ, AI sẽ tự điền thông tin cho bạn.</Text>
-              </Card>
-            ) : null}
-            {shown.length ? (
-              <View key={filter + q} onLayout={(e) => setGridW(e.nativeEvent.layout.width)} style={{ flexDirection: 'row', flexWrap: 'wrap', gap: GRID_GAP }}>
-                {shown.map((it, idx) => (
-                  <Rise key={it.id} delay={Math.min(idx, 10) * 60}>
-                    <Pressable onPress={() => setReview({ item: it, isNew: false })} accessibilityRole="button" accessibilityLabel={it.name}
-                      style={{ width: tile, height: tile, backgroundColor: C.pinkSoft, borderRadius: 16, padding: 8, gap: 4 }}>
-                      <Image source={{ uri: it.cutout_url ?? it.image_url }} resizeMode="contain" style={{ flex: 1 }} />
-                      <Text numberOfLines={1} style={{ fontSize: 11, fontWeight: '700', color: C.text, textAlign: 'center' }}>{it.name}</Text>
+        {tab === 'shop' ? <ShopCatalog items={items} profile={profile} onOpenStudio={onOpenStudio} /> : (
+          <FlatList
+            style={{ flex: 1 }}
+            data={shown}
+            keyExtractor={(item) => item.id}
+            numColumns={3}
+            initialNumToRender={6}
+            maxToRenderPerBatch={6}
+            windowSize={5}
+            columnWrapperStyle={{ gap: GRID_GAP }}
+            onLayout={(e) => setGridW(e.nativeEvent.layout.width)}
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={{ gap: S.gap, paddingBottom: 16 }}
+            ListHeaderComponent={(
+              <View style={{ gap: S.gap }}>
+                {error ? <ErrorBox message={error} onRetry={errorRetry ?? undefined} /> : null}
+                {added ? <Banner text={added} /> : null}
+                <TextInput value={query} onChangeText={setQuery} placeholder="Tìm trong tủ đồ" placeholderTextColor={C.sub}
+                  accessibilityLabel="Tìm trong tủ đồ" autoCorrect={false}
+                  style={{ height: 46, backgroundColor: C.card, borderWidth: 1, borderColor: C.line, borderRadius: R.chip + 2, paddingHorizontal: 16, fontSize: 15, color: C.text }} />
+                <View style={{ flexDirection: 'row', gap: 8 }}>
+                  {FILTERS.map((f) => (
+                    <Pressable key={f.key} onPress={() => setFilter(f.key)} accessibilityRole="button" accessibilityState={{ selected: filter === f.key }}
+                      style={{ flex: 1, minHeight: 44, alignItems: 'center', justifyContent: 'center', borderRadius: R.chip, borderWidth: 1,
+                        backgroundColor: filter === f.key ? C.pink : C.card, borderColor: filter === f.key ? C.pink : C.line }}>
+                      <Text numberOfLines={1} style={{ fontSize: 13, fontWeight: filter === f.key ? '700' : '500', color: filter === f.key ? C.wine : C.text }}>{f.label}</Text>
                     </Pressable>
-                  </Rise>
-                ))}
+                  ))}
+                </View>
+                {loading && items.length === 0 ? <Loading text="Đang tải tủ đồ…" /> : null}
               </View>
-            ) : null}
-          </>
+            )}
+            ListEmptyComponent={!loading ? (
+              <Card style={{ gap: 6, alignItems: 'center', padding: 24 }}>
+                <Text style={T.h2}>{items.length === 0 ? 'Thêm món đồ đầu tiên' : q ? 'Không tìm thấy món phù hợp' : 'Chưa có món nào ở nhóm này'}</Text>
+                <Text style={[T.sub, { textAlign: 'center' }]}>{items.length === 0 ? 'Chụp một món đồ, AI sẽ tự điền thông tin cho bạn.' : q ? 'Thử từ khoá khác hoặc xoá tìm kiếm để xem lại tủ đồ.' : 'Thử chọn nhóm khác để xem các món trong tủ.'}</Text>
+                {q ? <Button title="Xoá tìm kiếm" kind="outline" onPress={() => setQuery('')} /> : null}
+              </Card>
+            ) : undefined}
+            renderItem={({ item: it }) => (
+              <Pressable onPress={() => setReview({ item: it, isNew: false })} accessibilityRole="button" accessibilityLabel={it.name}
+                style={{ width: tile, height: tile, backgroundColor: C.pinkSoft, borderRadius: 16, padding: 8, gap: 4 }}>
+                <Image source={{ uri: it.cutout_url ?? it.image_url }} resizeMode="contain" style={{ flex: 1 }} />
+                <Text numberOfLines={1} style={{ fontSize: 11, fontWeight: '700', color: C.text, textAlign: 'center' }}>{it.name}</Text>
+              </Pressable>
+            )}
+          />
         )}
       </Screen>
       {pendingDelete && tab === 'mine' ? (

@@ -56,6 +56,7 @@ export function Button({ title, onPress, kind = 'primary', disabled, loading, ic
       disabled={disabled || loading}
       accessibilityRole="button"
       accessibilityLabel={title}
+      accessibilityState={{ disabled: !!disabled || !!loading, busy: !!loading }}
       style={({ pressed }) => [st.button, { backgroundColor: bg, borderColor: kind === 'outline' ? C.line : bg, opacity: disabled ? 0.5 : pressed ? 0.75 : 1 }, style]}
     >
       {loading ? <ActivityIndicator color={fg} /> : (
@@ -68,10 +69,10 @@ export function Button({ title, onPress, kind = 'primary', disabled, loading, ic
   );
 }
 
-export function Chip({ label, selected, onPress }: { label: string; selected?: boolean; onPress?: () => void }) {
+export function Chip({ label, selected, disabled, onPress }: { label: string; selected?: boolean; disabled?: boolean; onPress?: () => void }) {
   return (
-    <Pressable onPress={onPress} accessibilityRole="button" accessibilityState={{ selected: !!selected }}
-      style={({ pressed }) => [st.chip, { backgroundColor: selected ? C.pink : C.card, borderColor: selected ? C.pink : C.line, opacity: pressed ? 0.6 : 1 }]}>
+    <Pressable onPress={onPress} disabled={disabled} accessibilityRole="button" accessibilityState={{ selected: !!selected, disabled: !!disabled }}
+      style={({ pressed }) => [st.chip, { backgroundColor: selected ? C.pink : C.card, borderColor: selected ? C.pink : C.line, opacity: disabled ? 0.45 : pressed ? 0.6 : 1 }]}>
       <Text style={{ fontSize: 14, fontWeight: selected ? '700' : '500', color: selected ? C.wine : C.text }}>{label}</Text>
     </Pressable>
   );
@@ -110,7 +111,7 @@ export function Screen({ title, subtitle, onBack, right, children, scroll = true
       {title ? (
         <View style={st.header}>
           {onBack ? (
-            <Pressable onPress={onBack} accessibilityRole="button" accessibilityLabel="Quay lại" style={st.back}><Icon name="left" size={18} /></Pressable>
+          <Pressable onPress={onBack} accessibilityRole="button" accessibilityLabel="Quay lại" style={st.back}><Icon name="left" size={18} /></Pressable>
           ) : null}
           <View style={{ flex: 1 }}>
             <Text style={T.h1}>{title}</Text>
@@ -129,7 +130,7 @@ export function Screen({ title, subtitle, onBack, right, children, scroll = true
 export function Sheet({ visible, onClose, title, subtitle, children }: { visible: boolean; onClose: () => void; title: string; subtitle?: string; children: React.ReactNode }) {
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={{ flex: 1, backgroundColor: C.dim }} onPress={onClose} accessibilityLabel="Đóng" />
+      <Pressable style={{ flex: 1, backgroundColor: C.dim }} onPress={onClose} accessibilityRole="button" accessibilityLabel="Đóng" />
       <View style={st.sheet}>
         <View style={st.grabber} />
         <Text style={T.h2}>{title}</Text>
@@ -172,7 +173,7 @@ export function Loading({ text }: { text: string }) {
 export function ErrorBox({ message, onRetry }: { message: string; onRetry?: () => void }) {
   return (
     <Card style={{ gap: 10 }}>
-      <Text style={{ fontSize: 14, color: C.danger }}>{message}</Text>
+      <Text accessibilityRole="alert" style={{ fontSize: 14, color: C.danger }}>{message}</Text>
       {onRetry ? <Button title="Thử lại" kind="outline" onPress={onRetry} /> : null}
     </Card>
   );
@@ -185,7 +186,7 @@ const st = StyleSheet.create({
   card: { backgroundColor: C.card, borderRadius: R.card, padding: 16 },
   banner: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: C.pink, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 9 },
   header: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: S.page, paddingBottom: 6 },
-  back: { width: 40, height: 40, borderRadius: 12, backgroundColor: C.card, alignItems: 'center', justifyContent: 'center' },
+  back: { width: 44, height: 44, borderRadius: 12, backgroundColor: C.card, alignItems: 'center', justifyContent: 'center' },
   sheet: { backgroundColor: C.bg, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: S.page, paddingBottom: 20 + BOTTOM_INSET },
   grabber: { alignSelf: 'center', width: 40, height: 4, borderRadius: 2, backgroundColor: C.line, marginBottom: 14 },
 });

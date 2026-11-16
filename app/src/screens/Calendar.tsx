@@ -60,11 +60,22 @@ export default function Calendar({ items, onOpenTryOn, onOpenProfile, profile }:
   useEffect(load, [load]);
 
   const [fc, setFc] = useState<Record<string, DayWeather>>({});
-  useEffect(() => {
-    let live = true;
-    api.weatherRange(from, to, profile.city).then((w) => { if (live) setFc(w); });
-    return () => { live = false; };
+  const [weatherLoading, setWeatherLoading] = useState(true);
+  const [weatherError, setWeatherError] = useState<string | null>(null);
+  const weatherReq = useRef(0);
+  const loadWeather = useCallback(() => {
+    const id = ++weatherReq.current;
+    setWeatherLoading(true);
+    setWeatherError(null);
+    api.weatherRange(from, to, profile.city)
+      .then((w) => { if (id === weatherReq.current) setFc(w); })
+      .catch((e) => { if (id === weatherReq.current) setWeatherError(errText(e)); })
+      .finally(() => { if (id === weatherReq.current) setWeatherLoading(false); });
   }, [from, to, profile.city]);
+  useEffect(() => {
+    loadWeather();
+    return () => { weatherReq.current++; };
+  }, [loadWeather]);
 
   const byId = new Map(items.map((i) => [i.id, i]));
   const itemsOf = (p?: Plan) => (p?.outfit ? p.outfit.item_ids.map((id) => byId.get(id)).filter((i): i is Item => !!i) : []);
@@ -128,7 +139,7 @@ export default function Calendar({ items, onOpenTryOn, onOpenProfile, profile }:
                 const isSel = key === selected;
                 const p = plans[key];
                 return (
-                  <Pressable key={c} onPress={() => setSelected(key)} accessibilityRole="button" accessibilityLabel={`${dateLabel(key)}${p ? `, ${STATUS[p.status]}` : ''}`}
+                  <Pressable key={c} onPress={() => setSelected(key)} accessibilityRole="button" accessibilityState={{ selected: isSel }} accessibilityLabel={`${dateLabel(key)}${isToday ? ', hôm nay' : ''}${p ? `, ${STATUS[p.status]}` : ''}${fc[key] ? `, cao nhất ${fc[key].t_max} độ${fc[key].rain_pct >= 35 ? ', có thể mưa' : ''}` : ''}`}
                     style={[st.cell, st.day, isSel && { backgroundColor: C.pink }, isToday && { backgroundColor: C.wine }]}>
                     <Text style={{ fontSize: 15, fontWeight: isToday || isSel ? '700' : '500', color: isToday ? '#fff' : C.text }}>{d.getDate()}</Text>
                     {fc[key] ? (
@@ -156,6 +167,20 @@ export default function Calendar({ items, onOpenTryOn, onOpenProfile, profile }:
         </View>
       )}
 
+      {weatherError ? (
+        <Card style={{ gap: 8 }}>
+          <Text accessibilityRole="alert" style={{ fontSize: 13, color: C.danger }}>
+            Không tải được dự báo thời tiết mới. {weatherError}
+          </Text>
+          <Button title="Thử tải dự báo lại" onPress={loadWeather} loading={weatherLoading} />
+        </Card>
+      ) : null}
+      {weatherLoading ? (
+        <Text accessibilityLiveRegion="polite" style={T.small}>
+          {Object.keys(fc).length ? 'Đang cập nhật dự báo thời tiết…' : 'Đang tải dự báo thời tiết…'}
+        </Text>
+      ) : null}
+
       {loading ? <Loading text="Đang mở lịch…" /> : err ? <ErrorBox message={err} onRetry={load} /> : mode === 'month' ? (
         <Card style={{ gap: 12 }}>
           <Text style={[T.small, { color: C.text }]}>{dateLabel(selected)}</Text>
@@ -164,7 +189,7 @@ export default function Calendar({ items, onOpenTryOn, onOpenProfile, profile }:
               <Text style={[T.small, { fontWeight: '600' }]}>{wxLine}</Text>
               {rec && sel?.status === 'worn' ? <Text style={T.small}>Thời tiết lúc mặc</Text> : null}
             </View>
-          ) : <Text style={T.small}>Chưa có dự báo cho ngày này</Text>}
+          ) : <Text style={T.small}>{weatherError ? 'Không thể cập nhật dự báo lúc này' : weatherLoading ? 'Đang tải dự báo thời tiết…' : 'Chưa có dự báo cho ngày này'}</Text>}
           {sel?.outfit ? (
             <View style={{ gap: 10 }}>
               <View style={{ flexDirection: 'row', gap: 12, alignItems: 'center' }}>
@@ -192,20 +217,18 @@ export default function Calendar({ items, onOpenTryOn, onOpenProfile, profile }:
             const key = fmt(d);
             const p = plans[key];
             const first = itemsOf(p)[0];
-            const isToday = key === today;
             const fw = fc[key];
             const meta = p?.status === 'worn' ? 'Đã mặc · Nhật ký'
               : [p?.weather ? `${Math.round(p.weather.t_max)}°` : fw ? `${Math.round(fw.t_max)}°` : null, p?.weather?.morning.cond ?? fw?.cond ?? (p ? STATUS[p.status] : null)].filter(Boolean).join(' · ');
             return (
-              <Pressable key={key} onPress={() => setSelected(key)} accessibilityRole="button" accessibilityLabel={dateLabel(key)}
-                style={[st.weekRow, (isToday || key === selected) && { backgroundColor: C.pink }]}>
+              <View key={key} style={[st.weekRow, key === today && { backgroundColor: C.pink }]}>
                 <Text style={st.weekDay}>{WEEK[i]} {`${d.getDate()}`.padStart(2, '0')}</Text>
                 <Thumb item={first} size={64} />
                 <View style={{ flex: 1, gap: 4 }}>
                   <Text style={{ fontSize: 15, fontWeight: '700', color: C.text }} numberOfLines={2}>{p?.outfit?.name ?? 'Chưa chốt outfit'}</Text>
                   {meta ? <Text style={T.small}>{meta}</Text> : null}
                 </View>
-              </Pressable>
+              </View>
             );
           })}
         </View>

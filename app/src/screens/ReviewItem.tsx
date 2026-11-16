@@ -9,6 +9,12 @@ const LEN_UP: [string, string][] = [['crop', 'Lửng'], ['ngang_hong', 'Ngang h�
 const LEN_DOWN: [string, string][] = [['tren_goi', 'Trên gối'], ['ngang_goi', 'Ngang gối'], ['mat_ca', 'Tới mắt cá'], ['cham_dat', 'Chấm đất']];
 const RISE: [string, string][] = [['cap_cao', 'Cạp cao'], ['cap_vua', 'Cạp vừa'], ['cap_thap', 'Cạp thấp']];
 const FIT: [string, string][] = [['om', 'Ôm'], ['vua', 'Vừa'], ['rong', 'Rộng']];
+const FIELD_LABELS: Record<'name' | 'category' | 'color_name' | 'material', string> = {
+  name: 'Tên món',
+  category: 'Danh mục',
+  color_name: 'Màu',
+  material: 'Chất liệu',
+};
 
 const input = { minHeight: 44, borderRadius: 12, borderWidth: 1, borderColor: C.line, paddingHorizontal: 12, fontSize: 15, color: C.text, backgroundColor: C.bg } as const;
 
@@ -38,7 +44,8 @@ export default function ReviewItem({ item, isNew, cutout, cutting, onSave, onDel
   const run = async (fn: () => Promise<void>) => {
     setBusy(true);
     setError(null);
-    try { await fn(); } catch (e) { setError(e instanceof Error ? e.message : 'Có lỗi xảy ra.'); setBusy(false); }
+    try { await fn(); } catch (e) { setError(e instanceof Error ? e.message : 'Có lỗi xảy ra.'); }
+    finally { setBusy(false); }
   };
 
   const save = () => run(async () => {
@@ -46,6 +53,10 @@ export default function ReviewItem({ item, isNew, cutout, cutting, onSave, onDel
     (Object.keys(f) as (keyof Item)[]).forEach((k) => {
       if (JSON.stringify(f[k]) !== JSON.stringify(item[k])) patch[k] = f[k];
     });
+    if (Object.keys(patch).length === 0) {
+      onBack();
+      return;
+    }
     await onSave(patch as Partial<Item>);
   });
 
@@ -53,9 +64,9 @@ export default function ReviewItem({ item, isNew, cutout, cutting, onSave, onDel
   const pick = (opts: [string, string][], key: 'length' | 'rise' | 'fit') => (
     <Wrap>{opts.map(([v, l]) => <Chip key={v} label={l} selected={f[key] === v} onPress={() => set(key, f[key] === v ? '' : v)} />)}</Wrap>
   );
-  const text = (key: 'name' | 'category' | 'color_name' | 'material') => (
-    <TextInput value={f[key]} onChangeText={(v) => set(key, v)} style={input} accessibilityLabel={key} />
-  );
+  const text = (key: 'name' | 'category' | 'color_name' | 'material') => {
+    return <TextInput value={f[key]} onChangeText={(v) => set(key, v)} style={input} accessibilityLabel={FIELD_LABELS[key]} />;
+  };
 
   return (
     <Screen
@@ -64,7 +75,7 @@ export default function ReviewItem({ item, isNew, cutout, cutting, onSave, onDel
       onBack={onBack}
       footer={
         <>
-          {error ? <Text style={{ color: C.danger, fontSize: 13 }}>{error}</Text> : null}
+          {error ? <Text accessibilityRole="alert" style={{ color: C.danger, fontSize: 13 }}>{error}</Text> : null}
           <Button title="Lưu vào tủ đồ" onPress={save} loading={busy && !confirm} disabled={busy} />
           {confirm ? (
             <Card style={{ gap: 10 }}>

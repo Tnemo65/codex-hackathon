@@ -1,10 +1,10 @@
 // "Gợi ý mua": shop inventory with AI picks for this wardrobe, filter, and product detail sheet.
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Image, Linking, Pressable, ScrollView, Text, View, useWindowDimensions } from 'react-native';
+import { ActivityIndicator, FlatList, Image, Linking, Pressable, ScrollView, Text, View, useWindowDimensions } from 'react-native';
 import { api } from '../api';
 import { cachedCatalog, cachedPicks, loadCatalog, loadPicks, queueStudioPick } from '../catalog';
 import { C, R, S, T } from '../theme';
-import type { Item, Kind, Product, ProductMatch } from '../types';
+import type { Item, Kind, Product, ProductMatch, Profile } from '../types';
 import { Button, Chip, ErrorBox, Loading, Sheet } from '../ui';
 import { ThoughtLine } from './ThoughtLine';
 
@@ -21,7 +21,7 @@ const matchCache = new Map<string, ProductMatch>();
 
 const money =(n: number) => `${Math.round(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.')}đ`;
 
-export function ShopCatalog({ items, onOpenStudio }: { items: Item[]; onOpenStudio: () => void }) {
+export function ShopCatalog({ items, profile, onOpenStudio }: { items: Item[]; profile: Profile; onOpenStudio: () => void }) {
   const [products, setProducts] = useState<Product[]>(cachedCatalog());
   const [picks, setPicks] = useState(cachedPicks());
   const [loadingCatalog, setLoadingCatalog] = useState(cachedCatalog().length === 0);
@@ -48,19 +48,42 @@ export function ShopCatalog({ items, onOpenStudio }: { items: Item[]; onOpenStud
 
   const [match, setMatch] = useState<ProductMatch | null>(null);
   const [matchError, setMatchError] = useState(false);
+  const [shopLinkError, setShopLinkError] = useState<string | null>(null);
   const openId = open?.id;
   const current = useRef<string | undefined>(undefined);
+  // A match is generated against the current wardrobe, so product ID alone is not a safe cache key.
+  const wardrobeKey = items
+    .map((item) => [item.id, item.name, item.kind, item.color_name ?? '', item.material ?? ''].join('|'))
+    .sort()
+    .join(',');
+  // The backend prompt also includes these profile fields, so edits must invalidate cached matches.
+  const profileKey = [profile.wear, profile.job, profile.dress_code, profile.height_cm, profile.weight_kg,
+    profile.proportion, profile.fit_pref, [...profile.styles].sort().join('|')].join(':');
   const loadMatch = useCallback((id: string) => {
-    current.current = id;
+    const requestKey = `${profileKey}:${wardrobeKey}:${id}`;
+    current.current = requestKey;
     setMatchError(false);
-    const hit = matchCache.get(id);
+    const hit = matchCache.get(requestKey);
     if (hit) { setMatch(hit); return; }
     setMatch(null);
     api.catalogMatch(id)
-      .then((m) => { matchCache.set(id, m); if (current.current === id) setMatch(m); })
-      .catch(() => { if (current.current === id) setMatchError(true); });
-  }, []);
-  useEffect(() => { if (openId) loadMatch(openId); }, [openId, loadMatch]);
+      .then((m) => { matchCache.set(requestKey, m); if (current.current === requestKey) setMatch(m); })
+      .catch(() => { if (current.current === requestKey) setMatchError(true); });
+  }, [profileKey, wardrobeKey]);
+  useEffect(() => {
+    setShopLinkError(null);
+    if (openId) loadMatch(openId);
+  }, [openId, loadMatch]);
+
+  async function openShop() {
+    if (!open) return;
+    setShopLinkError(null);
+    try {
+      await Linking.openURL(open.shop_url);
+    } catch {
+      setShopLinkError(`Không mở được liên kết ${open.shop}. Kiểm tra kết nối rồi thử lại.`);
+    }
+  }
 
   const why = new Map(picks.map((p) => [p.id, p.why]));
   const picked = picks.map((p) => products.find((x) => x.id === p.id)).filter((x): x is Product => !!x);
@@ -68,7 +91,7 @@ export function ShopCatalog({ items, onOpenStudio }: { items: Item[]; onOpenStud
   const rest = products.filter((p) => !why.has(p.id) && (filter === 'all' || kinds.includes(p.kind)));
 
   const grid = (list: Product[]) => (
-    <View onLayout={(e) => setGridW(e.nativeEvent.layout.width)} style={{ flexDirection: 'row', flexWrap: 'wrap', gap: GRID_GAP }}>
+    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: GRID_GAP }}>
       {list.map((p) => (
         <Pressable key={p.id} onPress={() => setOpen(p)} accessibilityRole="button" accessibilityLabel={`${p.name}, ${money(p.price)}`}
           style={{ width: tile, backgroundColor: C.pinkSoft, borderRadius: 16, padding: 8, gap: 4 }}>
@@ -89,42 +112,73 @@ export function ShopCatalog({ items, onOpenStudio }: { items: Item[]; onOpenStud
 
   return (
     <>
-      {error ? <ErrorBox message={error} onRetry={() => load(true)} /> : null}
-      {loadingPicks && !error ? (
-        <ThoughtLine title="AI đang chọn đồ từ shop" steps={[
-          `Xem ${items.length} món trong tủ của bạn`,
-          'Lọc hàng từ Shopee, Lazada, TikTok Shop',
-          'Chọn món phối được với đồ bạn có',
-        ]} />
-      ) : null}
-      {loadingCatalog && !error ? <Loading text="Đang tải sản phẩm…" /> : null}
+      <FlatList
+        style={{ flex: 1 }}
+        data={rest}
+        keyExtractor={(product) => product.id}
+        numColumns={3}
+        initialNumToRender={6}
+        maxToRenderPerBatch={6}
+        windowSize={5}
+        columnWrapperStyle={{ gap: GRID_GAP }}
+        onLayout={(e) => setGridW(e.nativeEvent.layout.width)}
+        contentContainerStyle={{ gap: S.gap, paddingBottom: 16 }}
+        ListHeaderComponent={(
+          <View style={{ gap: S.gap }}>
+            {error ? <ErrorBox message={error} onRetry={() => load(true)} /> : null}
+            {loadingPicks && !error ? (
+              <ThoughtLine title="AI đang chọn đồ từ shop" steps={[
+                `Xem ${items.length} món trong tủ của bạn`,
+                'Lọc hàng từ Shopee, Lazada, TikTok Shop',
+                'Chọn món phối được với đồ bạn có',
+              ]} />
+            ) : null}
+            {loadingCatalog && !error ? <Loading text="Đang tải sản phẩm…" /> : null}
 
-      {picked.length ? (
-        <>
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-            <Text style={T.h2}>AI chọn cho bạn</Text>
-            <Pressable onPress={() => load(true)} disabled={loadingPicks} accessibilityRole="button" accessibilityLabel="Làm mới gợi ý"
-              style={{ minHeight: 44, justifyContent: 'center', opacity: loadingPicks ? 0.5 : 1 }}>
-              <Text style={{ fontSize: 13, fontWeight: '700', color: C.wine }}>Làm mới gợi ý</Text>
-            </Pressable>
-          </View>
-          {grid(picked)}
-        </>
-      ) : !loadingPicks && !error && products.length ? (
-        <Pressable onPress={() => load(true)} accessibilityRole="button" accessibilityLabel="Làm mới gợi ý" style={{ minHeight: 44, justifyContent: 'center' }}>
-          <Text style={{ fontSize: 13, fontWeight: '700', color: C.wine }}>Làm mới gợi ý</Text>
-        </Pressable>
-      ) : null}
+            {picked.length ? (
+              <>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <Text style={T.h2}>AI chọn cho bạn</Text>
+                  <Pressable onPress={() => load(true)} disabled={loadingPicks} accessibilityRole="button" accessibilityLabel="Làm mới gợi ý"
+                    style={{ minHeight: 44, justifyContent: 'center', opacity: loadingPicks ? 0.5 : 1 }}>
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: C.wine }}>Làm mới gợi ý</Text>
+                  </Pressable>
+                </View>
+                {grid(picked)}
+              </>
+            ) : !loadingPicks && !error && products.length ? (
+              <Pressable onPress={() => load(true)} accessibilityRole="button" accessibilityLabel="Làm mới gợi ý" style={{ minHeight: 44, justifyContent: 'center' }}>
+                <Text style={{ fontSize: 13, fontWeight: '700', color: C.wine }}>Làm mới gợi ý</Text>
+              </Pressable>
+            ) : null}
 
-      {products.length ? (
-        <>
-          <Text style={T.h2}>Tất cả sản phẩm</Text>
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-            {FILTERS.map((f) => <Chip key={f.key} label={f.label} selected={filter === f.key} onPress={() => setFilter(f.key)} />)}
+            {products.length ? (
+              <>
+                <Text style={T.h2}>Tất cả sản phẩm</Text>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                  {FILTERS.map((f) => <Chip key={f.key} label={f.label} selected={filter === f.key} onPress={() => setFilter(f.key)} />)}
+                </View>
+              </>
+            ) : null}
           </View>
-          {rest.length ? grid(rest) : <Text style={[T.sub, { textAlign: 'center', padding: 16 }]}>Chưa có sản phẩm ở nhóm này.</Text>}
-        </>
-      ) : null}
+        )}
+        ListEmptyComponent={products.length ? (
+          <Text style={[T.sub, { textAlign: 'center', padding: 16 }]}>Chưa có sản phẩm ở nhóm này.</Text>
+        ) : undefined}
+        renderItem={({ item: p }) => (
+          <Pressable onPress={() => setOpen(p)} accessibilityRole="button" accessibilityLabel={`${p.name}, ${money(p.price)}`}
+            style={{ width: tile, backgroundColor: C.pinkSoft, borderRadius: 16, padding: 8, gap: 4 }}>
+            <View style={{ height: tile - 40 }}>
+              <Image source={{ uri: p.cutout_url ?? p.image_url }} resizeMode="contain" style={{ flex: 1 }} />
+              <View style={{ position: 'absolute', top: 0, left: 0, backgroundColor: C.card, borderRadius: 999, paddingHorizontal: 6, paddingVertical: 2 }}>
+                <Text style={{ fontSize: 9, fontWeight: '700', color: C.wine }}>{p.shop}</Text>
+              </View>
+            </View>
+            <Text numberOfLines={1} style={{ fontSize: 11, fontWeight: '700', color: C.text, textAlign: 'center' }}>{p.name}</Text>
+            <Text numberOfLines={1} style={{ fontSize: 11, fontWeight: '700', color: C.wine, textAlign: 'center' }}>{money(p.price)}</Text>
+          </Pressable>
+        )}
+      />
 
       <Sheet visible={!!open} onClose={() => setOpen(null)} title={open?.name ?? ''} subtitle={open ? `${money(open.price)} · ${open.shop}` : undefined}>
         {open ? (
@@ -175,7 +229,8 @@ export function ShopCatalog({ items, onOpenStudio }: { items: Item[]; onOpenStud
                 ) : null}
               </>
             )}
-            <Button title={`Tìm món tương tự trên ${open.shop}`} onPress={() => { Linking.openURL(open.shop_url).catch(() => {}); }} />
+            {shopLinkError ? <ErrorBox message={shopLinkError} onRetry={() => void openShop()} /> : null}
+            <Button title={`Tìm món tương tự trên ${open.shop}`} onPress={() => void openShop()} />
             <Button title="Phối thử với tủ đồ" kind="secondary" onPress={() => { queueStudioPick(open.id); setOpen(null); onOpenStudio(); }} />
           </>
         ) : null}

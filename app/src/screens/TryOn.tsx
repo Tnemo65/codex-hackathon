@@ -24,7 +24,7 @@ type StatusRes = { status: 'pending' | 'done' | 'failed'; image_url: string | nu
 let consentGiven = false;
 let bodyOnServer = false;
 
-export default function TryOn({ items, profile, initialItemIds, onBack, onUseToday }: { items: Item[]; profile: Profile; initialItemIds: string[]; onBack: () => void; onUseToday: (itemIds: string[]) => void }) {
+export default function TryOn({ items, profile, initialItemIds, onBack, onUseToday }: { items: Item[]; profile: Profile; initialItemIds: string[]; onBack: () => void; onUseToday: (itemIds: string[]) => void | Promise<void> }) {
   // Starts at the garment picker: without a body photo the AI draws a model from the profile numbers.
   const [step, setStep] = useState<Step>('pick');
   const [consent, setConsent] = useState(consentGiven);
@@ -36,7 +36,13 @@ export default function TryOn({ items, profile, initialItemIds, onBack, onUseTod
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [busy, setBusy] = useState(false);
+  const [imageError, setImageError] = useState<string | null>(null);
+  const [usingToday, setUsingToday] = useState(false);
+  const [useTodayError, setUseTodayError] = useState<string | null>(null);
   const runRef = useRef(0); // increments to cancel an ongoing poll
+  const pendingJobIdRef = useRef<string | null>(null);
+  const completedJobIdRef = useRef<string | null>(null);
+  const imageRetryInFlightRef = useRef(false);
 
   const count = selected.length + extras.length;
   const full = count >= MAX_GARMENTS;
@@ -81,27 +87,49 @@ export default function TryOn({ items, profile, initialItemIds, onBack, onUseTod
     const started = Date.now();
     const tick = setInterval(() => setElapsed(Math.floor((Date.now() - started) / 1000)), 1000);
     try {
-      const { job_id } = await post<{ job_id: string }>(TRYON_URL, 'tryon.create', {
-        item_ids: selected,
-        body_image_base64: body ? body.base64 : null,
-        body_mode: body || bodyOnServer ? 'photo' : 'profile',
-        item_images_base64: extras.map((p) => p.base64),
-      }, 90000);
-      if (body) {
-        bodyOnServer = true;
-        setBody(null);
+      let jobId = pendingJobIdRef.current;
+      if (!jobId) {
+        const created = await post<{ job_id: string }>(TRYON_URL, 'tryon.create', {
+          item_ids: selected,
+          body_image_base64: body ? body.base64 : null,
+          body_mode: body || bodyOnServer ? 'photo' : 'profile',
+          item_images_base64: extras.map((p) => p.base64),
+        }, 90000);
+        if (runRef.current !== run) return;
+        jobId = created.job_id;
+        pendingJobIdRef.current = jobId;
+        if (body) {
+          bodyOnServer = true;
+          setBody(null);
+        }
       }
+      let statusFailures = 0;
       while (runRef.current === run) {
-        if (Date.now() - started > MAX_WAIT_MS) throw new Error('Tạo ảnh quá lâu. Thử lại với ít món hơn nhé.');
+        if (Date.now() - started > MAX_WAIT_MS) throw new Error('Đã chờ 3 phút nhưng chưa nhận được kết quả. Bấm Thử lại để tiếp tục kiểm tra yêu cầu đang chạy.');
         await new Promise((r) => setTimeout(r, POLL_MS));
         if (runRef.current !== run) return;
-        const res = await post<StatusRes>(TRYON_URL, 'tryon.status', { job_id }, 20000).catch(() => null);
-        if (!res || res.status === 'pending') continue;
+        let res: StatusRes;
+        try {
+          res = await post<StatusRes>(TRYON_URL, 'tryon.status', { job_id: jobId }, 20000);
+          statusFailures = 0;
+        } catch (e) {
+          statusFailures++;
+          if (statusFailures >= 3) {
+            const detail = e instanceof Error ? ` ${e.message}` : '';
+            throw new Error(`Không kết nối được để kiểm tra tiến trình tạo ảnh.${detail} Kiểm tra mạng rồi bấm Thử lại để tiếp tục theo dõi yêu cầu hiện tại.`);
+          }
+          continue;
+        }
+        if (res.status === 'pending') continue;
         if (res.status === 'done' && res.image_url) {
+          pendingJobIdRef.current = null;
+          completedJobIdRef.current = jobId;
           setImageUrl(res.image_url);
+          setImageError(null);
           setStep('result');
           return;
         }
+        pendingJobIdRef.current = null;
         throw new Error(res.error ?? 'AI tạm thời không tạo được ảnh, thử lại sau nhé.');
       }
     } catch (e) {
@@ -118,8 +146,42 @@ export default function TryOn({ items, profile, initialItemIds, onBack, onUseTod
 
   function cancel() {
     runRef.current++;
+    pendingJobIdRef.current = null;
     setBusy(false);
     setStep('pick');
+  }
+
+  function chooseDifferentItems() {
+    pendingJobIdRef.current = null;
+    setError(null);
+    setStep('pick');
+  }
+
+  async function retryResultImage() {
+    if (imageRetryInFlightRef.current) return;
+    const jobId = completedJobIdRef.current;
+    if (!jobId) return;
+    imageRetryInFlightRef.current = true;
+    setBusy(true);
+    setImageError(null);
+    try {
+      const res = await post<StatusRes>(TRYON_URL, 'tryon.status', { job_id: jobId }, 20000);
+      if (res.status === 'done' && res.image_url) setImageUrl(res.image_url);
+      else setImageError(res.error ?? 'Chưa tải lại được ảnh. Thử lại khi kết nối ổn định hơn.');
+    } catch (e) {
+      setImageError(e instanceof Error ? e.message : 'Không kiểm tra được ảnh.');
+    } finally {
+      imageRetryInFlightRef.current = false;
+      setBusy(false);
+    }
+  }
+
+  async function useForToday() {
+    setUsingToday(true);
+    setUseTodayError(null);
+    try { await onUseToday(selected); }
+    catch (e) { setUseTodayError(e instanceof Error ? e.message : 'Không thể dùng outfit hôm nay. Thử lại nhé.'); }
+    finally { setUsingToday(false); }
   }
 
   const chosenItems = selected.map((id) => items.find((i) => i.id === id)).filter((i): i is Item => !!i);
@@ -177,9 +239,10 @@ export default function TryOn({ items, profile, initialItemIds, onBack, onUseTod
   if (step === 'generating') {
     return (
       <Screen title="Đang tạo ảnh phối" subtitle="AI ghép các món và mô phỏng độ rủ vải." onBack={cancel}
-        footer={<Button title="Huỷ" kind="outline" onPress={cancel} />}>
+        footer={<Button title="Dừng chờ" kind="outline" onPress={cancel} />}>
         <RefineFrame elapsed={elapsed} uris={[...chosenItems.map((it) => it.cutout_url ?? it.image_url), ...extras.map((p) => p.uri)]} />
         <Text style={T.sub}>Thường mất khoảng 10 đến 30 giây. Bạn có thể giữ màn hình này mở.</Text>
+        <Text style={T.small}>Dừng chờ sẽ ngừng kiểm tra trên thiết bị này; yêu cầu trên máy chủ có thể vẫn tiếp tục chạy.</Text>
       </Screen>
     );
   }
@@ -192,15 +255,22 @@ export default function TryOn({ items, profile, initialItemIds, onBack, onUseTod
           <>
             <View style={{ flexDirection: 'row', gap: 8 }}>
               <Button title="Thử bộ khác" kind="outline" style={{ flex: 1 }} onPress={() => setStep('pick')} />
-              <Button title="Dùng cho hôm nay" style={{ flex: 1 }} disabled={!selected.length} onPress={() => onUseToday(selected)} />
+              <Button title="Dùng cho hôm nay" style={{ flex: 1 }} disabled={!selected.length || usingToday} loading={usingToday} onPress={() => void useForToday()} />
             </View>
             <Button title="Cập nhật dáng người" kind="outline" onPress={() => setStep('setup')} />
           </>
         )}>
         <View style={st.photoBox}>
-          <FadeImage uri={imageUrl} />
+          <FadeImage uri={imageUrl} onError={() => setImageError('Không tải được ảnh kết quả. Thử tải lại ảnh nhé.')} />
           <View style={st.badge}><Badge text="Minh hoạ AI" /></View>
         </View>
+        {imageError ? (
+          <Card style={{ gap: 10 }}>
+            <Text accessibilityRole="alert" style={{ fontSize: 14, color: C.danger }}>{imageError}</Text>
+            <Button title="Thử tải lại ảnh" kind="outline" loading={busy} disabled={busy} onPress={() => void retryResultImage()} />
+          </Card>
+        ) : null}
+        {useTodayError ? <ErrorBox message={useTodayError} onRetry={() => void useForToday()} /> : null}
         <Text style={T.h2}>Các món trong ảnh</Text>
         <View style={st.list}>
           {chosenItems.map((it) => (
@@ -224,10 +294,10 @@ export default function TryOn({ items, profile, initialItemIds, onBack, onUseTod
   // ---------- Failure ----------
   if (step === 'failed') {
     return (
-      <Screen title="Chưa tạo được ảnh" onBack={() => setStep('pick')}
+      <Screen title="Chưa tạo được ảnh" onBack={chooseDifferentItems}
         footer={(
           <>
-            <Button title="Chọn lại món" kind="outline" onPress={() => setStep('pick')} />
+            <Button title="Chọn lại món" kind="outline" onPress={chooseDifferentItems} />
             <Button title="Cập nhật dáng người" kind="outline" onPress={() => setStep('setup')} />
           </>
         )}>
@@ -337,12 +407,13 @@ function RefineFrame({ elapsed, uris }: { elapsed: number; uris: string[] }) {
 }
 
 // Result photo fades in once loaded instead of popping.
-function FadeImage({ uri }: { uri: string }) {
+function FadeImage({ uri, onError }: { uri: string; onError: () => void }) {
   const a = useRef(new Animated.Value(0)).current;
   const reduce = useReduceMotion();
   return (
     <Animated.Image source={{ uri }} style={[st.photo, { opacity: a }]} resizeMode="contain" accessibilityLabel="Ảnh phối do AI minh hoạ"
-      onLoad={() => (reduce ? a.setValue(1) : Animated.timing(a, { toValue: 1, duration: 600, useNativeDriver: true }).start())} />
+      onLoad={() => (reduce ? a.setValue(1) : Animated.timing(a, { toValue: 1, duration: 600, useNativeDriver: true }).start())}
+      onError={onError} />
   );
 }
 

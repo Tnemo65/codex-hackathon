@@ -87,8 +87,12 @@ const RESTORE_MAX_PER_10_MIN = 30; // global cap on restore attempts
 let ready: Promise<void> | null = null;
 function ensureReady(): Promise<void> {
   ready ??= (async () => {
+    const schemaStarted = Date.now();
     await sql.unsafe(SCHEMA);
+    console.log("ensure.schema", { ms: Date.now() - schemaStarted });
+    const bucketStarted = Date.now();
     const { error } = await storage().createBucket(BUCKET, { public: false });
+    console.log("ensure.bucket", { ms: Date.now() - bucketStarted, exists: !!error && /exist/i.test(error.message) });
     if (error && !/exist/i.test(error.message)) console.error("bucket", error.message);
   })().catch((e) => {
     ready = null;
@@ -105,11 +109,16 @@ const ITEM_COLS = sql`id, name, kind, category, color_name, color_hex, material,
 type Row = Record<string, any>;
 
 async function toItems(rows: Row[]) {
-  const paths = rows.flatMap((r) => [r.image_path, r.cutout_path].filter(Boolean)) as string[];
+  const pathRefs = rows.flatMap((r) => [r.image_path, r.cutout_path].filter(Boolean)) as string[];
+  // Multi-item detection stores one photo once and points every detected piece at it.
+  // Sign each object once per response; the map below already addresses URLs by path.
+  const paths = [...new Set(pathRefs)];
   const signed = new Map<string, string>();
+  const signStarted = Date.now();
   if (paths.length) {
-    const { data } = await storage().from(BUCKET).createSignedUrls(paths, SIGN_SECONDS);
+    const { data, error } = await storage().from(BUCKET).createSignedUrls(paths, SIGN_SECONDS);
     for (const s of data ?? []) if (s.path && s.signedUrl) signed.set(s.path, s.signedUrl);
+    console.log("items.sign", { refs: pathRefs.length, unique: paths.length, signed: signed.size, ms: Date.now() - signStarted, failed: !!error });
   }
   return rows.map((r) => ({
     id: r.id, name: r.name, kind: r.kind, category: r.category, color_name: r.color_name, color_hex: r.color_hex,
@@ -828,10 +837,12 @@ Deno.serve(async (req) => {
     if (action === "device.new") return json({ device_id: "d_" + randomString(32, "0123456789abcdef") });
     const device = String(body.device_id ?? "");
     if (!/^[a-z0-9_]{8,64}$/.test(device)) return json({ error: "Thiếu mã thiết bị." }, 400);
+    const readyStarted = Date.now();
     await ensureReady();
+    const readyMs = Date.now() - readyStarted;
     const out = await route(action, device, body);
     const ms = Date.now() - started;
-    console.log("ok", { action, ms });
+    console.log("ok", { action, ms, ready_ms: readyMs });
     // server_ms lets us tell model time from network time when measuring on a slow connection
     return json({ ...(out as Record<string, unknown>), server_ms: ms });
   } catch (err) {

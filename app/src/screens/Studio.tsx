@@ -1,6 +1,6 @@
 // "Phối đồ" screen: pick pieces from the wardrobe and the shop, see them on the body or as a canvas, try on with AI, use for today, save combos.
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Dimensions, Image, Linking, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { api, todayStr } from '../api';
 import { cachedCatalog, loadCatalog, takeStudioPicks } from '../catalog';
@@ -18,6 +18,7 @@ const ROWS: { label: string; kinds: Kind[] }[] = [
   { label: 'Túi', kinds: ['bag'] },
 ];
 type Saved = { id: string; name: string; item_ids: string[] };
+type PendingSavedWrite = { next: Saved[] };
 type Mode = 'body' | 'canvas' | 'saved';
 const TABS: { key: Mode; label: string }[] = [{ key: 'body', label: 'Trên người' }, { key: 'canvas', label: 'Canvas' }, { key: 'saved', label: 'Đã lưu' }];
 const SOURCES = [['own', 'Tủ của tôi'], ['shop', 'Từ shop']] as const;
@@ -47,12 +48,33 @@ export default function Studio({ items, profile, onOpenTryOn, onPlanChanged, onO
   const [mode, setMode] = useState<Mode>('body');
   const [ids, setIds] = useState<string[]>([]);
   const [saved, setSaved] = useState<Saved[]>([]);
+  const [savedReady, setSavedReady] = useState(false);
+  const [savedBusy, setSavedBusy] = useState(false);
+  const [savedError, setSavedError] = useState<string | null>(null);
+  const [savedErrorKind, setSavedErrorKind] = useState<'load' | 'write' | null>(null);
+  const pendingSavedWriteRef = useRef<PendingSavedWrite | null>(null);
+  const savedWriteInFlightRef = useRef(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [catalog, setCatalog] = useState<Product[]>(cachedCatalog());
   const [catState, setCatState] = useState<'idle' | 'loading' | 'error'>('idle');
   const [source, setSource] = useState<Record<string, 'own' | 'shop'>>({});
+
+  const loadSaved = useCallback(async () => {
+    setSavedError(null);
+    setSavedReady(false);
+    try {
+      const value = await AsyncStorage.getItem(SAVED_KEY);
+      setSaved(value ? JSON.parse(value) as Saved[] : []);
+      setSavedErrorKind(null);
+    } catch (e) {
+      setSavedErrorKind('load');
+      setSavedError(e instanceof Error ? e.message : 'Không tải được outfit đã lưu.');
+    } finally {
+      setSavedReady(true);
+    }
+  }, []);
 
   function fetchCatalog(force = false) {
     setCatState('loading');
@@ -61,7 +83,7 @@ export default function Studio({ items, profile, onOpenTryOn, onPlanChanged, onO
   }
 
   useEffect(() => {
-    AsyncStorage.getItem(SAVED_KEY).then((v) => { if (v) setSaved(JSON.parse(v) as Saved[]); }).catch(() => {});
+    void loadSaved();
     // App remounts Studio on every tab switch, so picks queued by "Phối thử" are taken here.
     const queued = takeStudioPicks();
     if (!queued.length && cachedCatalog().length) return;
@@ -77,7 +99,7 @@ export default function Studio({ items, profile, onOpenTryOn, onPlanChanged, onO
         return list.map((i) => i.id);
       });
     });
-  }, []);
+  }, [loadSaved]);
 
   const byId = new Map<string, Item>([...catalog, ...items].map((i) => [i.id, i]));
   const picked = ids.map((id) => byId.get(id)).filter((i): i is Item => !!i);
@@ -88,9 +110,27 @@ export default function Studio({ items, profile, onOpenTryOn, onPlanChanged, onO
   const canTry = ownIds.length >= 2;
   const total = products.reduce((sum, p) => sum + p.price, 0);
 
-  function persist(next: Saved[]) {
-    setSaved(next);
-    AsyncStorage.setItem(SAVED_KEY, JSON.stringify(next)).catch(() => {});
+  async function persist(next: Saved[]) {
+    if (savedWriteInFlightRef.current) return false;
+    savedWriteInFlightRef.current = true;
+    pendingSavedWriteRef.current = { next };
+    setSavedBusy(true);
+    setSavedError(null);
+    setSavedErrorKind(null);
+    setNote(null);
+    try {
+      await AsyncStorage.setItem(SAVED_KEY, JSON.stringify(next));
+      setSaved(next);
+      pendingSavedWriteRef.current = null;
+      return true;
+    } catch (e) {
+      setSavedErrorKind('write');
+      setSavedError(e instanceof Error ? e.message : 'Không lưu được outfit trên thiết bị.');
+      return false;
+    } finally {
+      savedWriteInFlightRef.current = false;
+      setSavedBusy(false);
+    }
   }
 
   function toggle(item: Item) {
@@ -113,9 +153,14 @@ export default function Studio({ items, profile, onOpenTryOn, onPlanChanged, onO
     } catch (e) { setErr(e instanceof Error ? e.message : 'Có lỗi xảy ra.'); } finally { setBusy(false); }
   }
 
-  function save() {
-    persist([{ id: `${Date.now()}`, name: `Bộ tự phối ${saved.length + 1}`, item_ids: pickedIds }, ...saved]);
-    setNote('Đã lưu outfit');
+  async function save() {
+    const ok = await persist([{ id: `${Date.now()}`, name: `Bộ tự phối ${saved.length + 1}`, item_ids: pickedIds }, ...saved]);
+    if (ok) setNote('Đã lưu outfit');
+  }
+
+  async function retrySavedWrite() {
+    const pending = pendingSavedWriteRef.current;
+    if (pending) await persist(pending.next);
   }
 
   function load(s: Saved) {
@@ -135,7 +180,8 @@ export default function Studio({ items, profile, onOpenTryOn, onPlanChanged, onO
       <Screen title="Phối đồ" right={avatar}>
         <Card style={{ gap: 6 }}>
           <Text style={T.h2}>Tủ đồ đang trống</Text>
-          <Text style={T.sub}>Thêm vài món ở tab Tủ đồ rồi quay lại đây để tự phối.</Text>
+          <Text style={T.sub}>Không tải được shop. Kiểm tra kết nối rồi thử lại để phối cùng sản phẩm shop.</Text>
+          <Button title="Thử tải shop lại" kind="outline" onPress={() => void fetchCatalog(true)} />
         </Card>
       </Screen>
     );
@@ -152,8 +198,12 @@ export default function Studio({ items, profile, onOpenTryOn, onPlanChanged, onO
         ))}
       </View>
 
+      {savedError ? <ErrorBox message={savedError} onRetry={() => void (savedErrorKind === 'load' ? loadSaved() : retrySavedWrite())} /> : null}
+
       {mode === 'saved' ? (
-        saved.length === 0 ? (
+        !savedReady ? (
+          <Card><Text style={T.sub}>Đang tải outfit đã lưu…</Text></Card>
+        ) : saved.length === 0 ? (
           <Card style={{ gap: 6 }}>
             <Text style={T.h2}>Chưa lưu outfit nào</Text>
             <Text style={T.sub}>Chọn vài món rồi bấm Lưu outfit.</Text>
@@ -171,7 +221,7 @@ export default function Studio({ items, profile, onOpenTryOn, onPlanChanged, onO
                     <Text style={{ fontSize: 14, fontWeight: '700', color: C.text }} numberOfLines={1}>{s.name}</Text>
                     <Text style={T.small}>{its.length} món · {its.some(isProduct) ? 'Có món từ shop' : 'Từ tủ đồ'}</Text>
                   </Pressable>
-                  <Pressable onPress={() => persist(saved.filter((x) => x.id !== s.id))} accessibilityRole="button" accessibilityLabel={`Xoá ${s.name}`} style={st.del}>
+                  <Pressable onPress={() => void persist(saved.filter((x) => x.id !== s.id))} disabled={savedBusy} hitSlop={6} accessibilityRole="button" accessibilityLabel={`Xoá ${s.name}`} style={st.del}>
                     <Icon name="trash" size={16} color={C.sub} />
                   </Pressable>
                 </View>
@@ -265,7 +315,7 @@ export default function Studio({ items, profile, onOpenTryOn, onPlanChanged, onO
           {note ? <Badge text={note} tone="ok" /> : null}
           {err ? <ErrorBox message={err} onRetry={() => void useToday()} /> : null}
           <View style={{ flexDirection: 'row', gap: 10, marginTop: 4 }}>
-            <Button title="Lưu outfit" kind="outline" disabled={!canGo} onPress={save} style={{ flex: 1 }} />
+            <Button title="Lưu outfit" kind="outline" disabled={!canGo || !savedReady || savedBusy} loading={savedBusy} onPress={() => void save()} style={{ flex: 1 }} />
             <Button title="Dùng cho hôm nay" kind="secondary" disabled={!canTry} loading={busy} onPress={() => void useToday()} style={{ flex: 1 }} />
           </View>
           <Button title="Mặc thử AI" icon="spark" disabled={!canTry} onPress={() => onOpenTryOn(ownIds)} />
@@ -281,7 +331,7 @@ const st = StyleSheet.create({
   tabs: { flexDirection: 'row', gap: 8 },
   tab: { flex: 1, minHeight: 44, borderRadius: R.chip, borderWidth: 1, borderColor: C.line, backgroundColor: C.card, alignItems: 'center', justifyContent: 'center' },
   stage: { backgroundColor: C.pinkSoft, borderRadius: R.card, overflow: 'hidden' },
-  chip: { paddingHorizontal: 10, minHeight: 28, borderRadius: R.chip, borderWidth: 1, borderColor: C.line, backgroundColor: C.card, alignItems: 'center', justifyContent: 'center' },
+  chip: { paddingHorizontal: 10, minHeight: 44, borderRadius: R.chip, borderWidth: 1, borderColor: C.line, backgroundColor: C.card, alignItems: 'center', justifyContent: 'center' },
   tile: { width: 84, padding: 6, gap: 4, borderRadius: 16, borderWidth: 2, borderColor: 'transparent', backgroundColor: C.pinkSoft, alignItems: 'center' },
   tileImg: { width: 70, height: 70 },
   shopTag: { fontSize: 9, fontWeight: '700', color: C.sub, backgroundColor: C.card, borderRadius: 6, paddingHorizontal: 4, overflow: 'hidden' },
@@ -290,5 +340,5 @@ const st = StyleSheet.create({
   savedCard: { width: (Math.min(Dimensions.get('window').width, 520) - S.page * 2 - S.gap) / 2, backgroundColor: C.card, borderRadius: R.card, padding: 12 },
   thumbs: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, height: 150, backgroundColor: C.pinkSoft, borderRadius: 12, padding: 4, overflow: 'hidden' },
   thumb: { width: '47%', height: 68 },
-  del: { position: 'absolute', top: 16, right: 16, width: 32, height: 32, borderRadius: 16, backgroundColor: 'rgba(255,255,255,0.9)', alignItems: 'center', justifyContent: 'center' },
+  del: { position: 'absolute', top: 16, right: 16, width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(255,255,255,0.9)', alignItems: 'center', justifyContent: 'center' },
 });
